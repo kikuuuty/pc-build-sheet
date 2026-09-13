@@ -7,9 +7,9 @@ import { getBuildSummary, getItemSubtotal } from './totals'
 
 const cpu: BuildItem = {
   kind: 'catalog', id: 'cpu', category: 'cpu', product: catalogProductSchema.parse(fixture.data[0]),
-  quantity: 2, price: 32800, source: 'buy', memo: '',
+  quantity: 2, price: 32800, source: 'buy',
 }
-const custom: BuildItem = { kind: 'custom', id: 'os', name: 'OS', quantity: 1, price: 22000, source: 'buy', memo: '' }
+const custom: BuildItem = { kind: 'custom', id: 'os', name: 'OS', quantity: 1, price: 22000, source: 'buy' }
 
 describe('purchase totals and quantities', () => {
   it('multiplies unit price by quantity and reflects a quantity change', () => {

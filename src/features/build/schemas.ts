@@ -4,14 +4,12 @@ import { partCategorySchema } from '../../domain/categories'
 
 export const MAX_PRICE = 100_000_000
 export const MAX_QUANTITY = 99
-export const MAX_MEMO_LENGTH = 1000
 export const MAX_NAME_LENGTH = 200
 
 export const editableFieldsSchema = z.object({
   quantity: z.number().int().min(1).max(MAX_QUANTITY),
   price: z.number().int().min(0).max(MAX_PRICE).nullable(),
   source: z.enum(['buy', 'owned']),
-  memo: z.string().max(MAX_MEMO_LENGTH),
 })
 export const itemChangesSchema = editableFieldsSchema.partial().strict()
 export const customNameSchema = z.string().trim().min(1).max(MAX_NAME_LENGTH)
@@ -42,16 +40,21 @@ export const persistedBuildSchema = z.object({ items: z.array(buildItemSchema) }
   { message: 'Build item IDs must be unique' },
 )
 
-// Validate legacy snapshots before adding the discriminator; never invent missing fields.
+// v1 lacks the discriminator. Zod strips obsolete fields (including memo) in v1/v2.
+// Cardinality is an addition rule, not a restoration rule: preserve legacy duplicate rows.
 export const legacyBuildSchema = z.object({
   items: z.array(z.object(catalogFields).refine((item) => item.category === item.product.category)),
 }).refine(uniqueIds,
   { message: 'Build item IDs must be unique' },
 )
 
-export function migrateV1Build(state: unknown) {
-  const legacy = legacyBuildSchema.parse(state)
-  return persistedBuildSchema.parse({ items: legacy.items.map((item) => ({ ...item, kind: 'catalog' })) })
+export function migrateBuild(state: unknown, version: number) {
+  if (version === 1) {
+    const legacy = legacyBuildSchema.parse(state)
+    return persistedBuildSchema.parse({ items: legacy.items.map((item) => ({ ...item, kind: 'catalog' })) })
+  }
+  if (version === 2) return persistedBuildSchema.parse(state)
+  throw new Error('Unsupported build version')
 }
 
 export type BuildItem = z.infer<typeof buildItemSchema>

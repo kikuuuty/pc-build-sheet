@@ -2,21 +2,23 @@ import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 import { z } from 'zod'
 import type { CatalogProduct } from '../../api/catalog/types'
+import { partCategories } from '../../domain/categories'
 import {
   buildItemSchema, customItemInputSchema, customNameSchema, itemChangesSchema,
-  legacyBuildSchema, migrateV1Build, persistedBuildSchema,
+  legacyBuildSchema, migrateBuild, persistedBuildSchema,
   type BuildItem, type CustomItemInput, type ItemChanges,
 } from './schemas'
 
 export const BUILD_STORAGE_KEY = 'pc-build-sheet:build'
-export const BUILD_STORAGE_VERSION = 2
+export const BUILD_STORAGE_VERSION = 3
 
 type BuildState = {
   items: BuildItem[]
-  addItem: (product: CatalogProduct) => void
+  addItem: (product: CatalogProduct) => boolean
+  replaceItem: (id: string, product: CatalogProduct) => boolean
   addCustomItem: (input: CustomItemInput) => boolean
   updateItem: (id: string, changes: ItemChanges) => boolean
-  updateCustomDetails: (id: string, details: { name: string; memo: string }) => boolean
+  renameCustomItem: (id: string, name: string) => boolean
   removeItem: (id: string) => void
   clearBuild: () => void
 }
@@ -26,6 +28,7 @@ export const usePersistenceStatus = create<{ issue: string | null }>(() => ({ is
 
 const persistedEnvelopeSchema = z.discriminatedUnion('version', [
   z.object({ version: z.literal(1), state: legacyBuildSchema }),
+  z.object({ version: z.literal(2), state: persistedBuildSchema }),
   z.object({ version: z.literal(BUILD_STORAGE_VERSION), state: persistedBuildSchema }),
 ])
 
@@ -70,17 +73,30 @@ export function createBuildStore(
   return create<BuildState>()(persist(
     (set, get) => ({
       items: [],
-      addItem: (product) => set((state) => ({
-        items: [...state.items, {
+      addItem: (product) => {
+        const category = partCategories.find(({ id }) => id === product.category)
+        if (!category || (category.cardinality === 'single' && get().items.some((item) => item.kind === 'catalog' && item.category === category.id))) return false
+        const item = buildItemSchema.safeParse({
           id: crypto.randomUUID(), kind: 'catalog', category: product.category, product,
-          quantity: 1, price: null, source: 'buy', memo: '',
-        }],
-      })),
+          quantity: 1, price: null, source: 'buy',
+        })
+        if (!item.success) return false
+        set((state) => ({ items: [...state.items, item.data] }))
+        return true
+      },
+      replaceItem: (id, product) => {
+        const item = get().items.find((item) => item.id === id)
+        if (item?.kind !== 'catalog' || item.category !== product.category) return false
+        const replacement = buildItemSchema.safeParse({ ...item, product, price: null })
+        if (!replacement.success) return false
+        set((state) => ({ items: state.items.map((item) => item.id === id ? replacement.data : item) }))
+        return true
+      },
       addCustomItem: (input) => {
         const parsed = customItemInputSchema.safeParse(input)
         if (!parsed.success) return false
         const item = buildItemSchema.safeParse({
-          id: crypto.randomUUID(), kind: 'custom', quantity: 1, price: null, source: 'buy', memo: '', ...parsed.data,
+          id: crypto.randomUUID(), kind: 'custom', quantity: 1, price: null, source: 'buy', ...parsed.data,
         })
         if (!item.success) return false
         set((state) => ({ items: [...state.items, item.data] }))
@@ -95,11 +111,11 @@ export function createBuildStore(
         set((state) => ({ items: state.items.map((item) => item.id === id ? parsed.data : item) }))
         return true
       },
-      updateCustomDetails: (id, details) => {
+      renameCustomItem: (id, input) => {
         const item = get().items.find((item) => item.id === id)
-        const name = customNameSchema.safeParse(details.name)
+        const name = customNameSchema.safeParse(input)
         if (item?.kind !== 'custom' || !name.success) return false
-        const parsed = buildItemSchema.safeParse({ ...item, name: name.data, memo: details.memo })
+        const parsed = buildItemSchema.safeParse({ ...item, name: name.data })
         if (!parsed.success) return false
         set((state) => ({ items: state.items.map((item) => item.id === id ? parsed.data : item) }))
         return true
@@ -112,10 +128,7 @@ export function createBuildStore(
       version: BUILD_STORAGE_VERSION,
       storage: createJSONStorage(() => checkedStorage(storage, report)),
       partialize: (state) => ({ items: state.items }),
-      migrate: (state, version) => {
-        if (version === 1) return migrateV1Build(state)
-        throw new Error('Unsupported build version')
-      },
+      migrate: migrateBuild,
       merge: (persisted, current) => {
         const parsed = persistedBuildSchema.safeParse(persisted)
         return parsed.success ? { ...current, items: parsed.data.items } : current

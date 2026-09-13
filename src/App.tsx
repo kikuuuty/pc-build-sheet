@@ -1,14 +1,13 @@
 import { useState } from 'react'
 import { Check, Monitor, AlertCircle } from 'lucide-react'
-import type { CategoryDefinition } from './domain/categories'
 import { Attribution } from './components/Attribution'
 import { BuildSheet } from './features/build/BuildSheet'
 import { BuildSummary } from './features/build/BuildSummary'
 import { usePersistenceStatus } from './features/build/store'
-import { ProductSearchDialog } from './features/search/ProductSearchDialog'
+import { ProductSearchDialog, type SearchRequest } from './features/search/ProductSearchDialog'
 
 export function App() {
-  const [category, setCategory] = useState<CategoryDefinition | null>(null)
+  const [search, setSearch] = useState<SearchRequest | null>(null)
   const [announcement, setAnnouncement] = useState('')
   const persistenceIssue = usePersistenceStatus((state) => state.issue)
 
@@ -23,11 +22,11 @@ export function App() {
       <main className="app-main">
         <div className="page-heading"><div><p className="eyebrow">BUILD SHEET</p><h2>マイ構成</h2></div><p>ひとつずつ選んで、理想の1台に。</p></div>
         {persistenceIssue && <p className="storage-warning" role="alert">{persistenceIssue}</p>}
-        <div className="workspace"><BuildSheet onSelect={setCategory} /><BuildSummary /></div>
+        <div className="workspace"><BuildSheet onSearch={setSearch} /><BuildSummary /></div>
         <footer className="app-footer"><span>自作PC構成シート</span><Attribution /></footer>
       </main>
       <div className="sr-only" role="status">{announcement}</div>
-      {category && <ProductSearchDialog key={category.id} category={category} onClose={() => setCategory(null)} onAdded={(name) => { setAnnouncement(`${name}を構成に追加しました`); setCategory(null) }} />}
+      {search && <ProductSearchDialog {...search} onClose={() => setSearch(null)} onSelected={(name) => { setAnnouncement(`${name}${search.target.mode === 'add' ? 'を構成に追加しました' : 'に置き換えました。単価は未入力に戻りました'}`); setSearch(null) }} />}
     </>
   )
 }

@@ -8,9 +8,10 @@ type Props = {
   children: ReactNode
   variant: 'wide' | 'confirm' | 'edit'
   initialFocus?: RefObject<HTMLElement | null>
+  returnFocus?: RefObject<HTMLElement | null>
 }
 
-export function Dialog({ title, titleId, onClose, children, variant, initialFocus }: Props) {
+export function Dialog({ title, titleId, onClose, children, variant, initialFocus, returnFocus }: Props) {
   const ref = useRef<HTMLDialogElement>(null)
   const pressedBackdrop = useRef(false)
 
@@ -24,9 +25,11 @@ export function Dialog({ title, titleId, onClose, children, variant, initialFocu
     return () => {
       dialog.close()
       document.body.style.overflow = overflow
-      if (opener instanceof HTMLElement) opener.focus()
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- Adding a single-category item mounts a new opener; resolve that node on close.
+      const focusTarget = returnFocus?.current ?? opener
+      if (focusTarget instanceof HTMLElement) focusTarget.focus()
     }
-  }, [initialFocus])
+  }, [initialFocus, returnFocus])
 
   return (
     <dialog

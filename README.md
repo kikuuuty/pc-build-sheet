@@ -1,6 +1,6 @@
 # 自作PC構成シート
 
-PCパーツを検索・追加し、単価・数量を入力して構成と見積もりを作成できるWebツールです。商品一覧ではなく構成シートを起点に、全カテゴリを同じ操作で扱えます。Phase 2まで実装済みです。
+PCパーツを検索・追加し、単価・数量を入力して構成と見積もりを作成できるWebツールです。商品一覧ではなく構成シートを起点に、全カテゴリを同じ操作で扱えます。Phase 2.1では「1製品＝ほぼ1行」の高密度な構成表に整理しました。
 
 ## 技術スタック
 
@@ -45,8 +45,8 @@ npm run test:e2e
 npm run test:live
 ```
 
-- 単体テスト：単価×数量、購入合計、流用/未入力/0円の区別、数量ベースの集計、価格入力の正規化と上限、部分更新のinvariant、任意項目の追加・更新・削除、persist対象・復元・v1→v2 migration・不正データ・保存障害。既存のAPI schema・HTTP/通信エラー・中断・retry方針・スペック表示も検証します。
-- E2E：APIを固定レスポンスに置き換え、PC/モバイルで検索→追加→単価/数量→流用/購入→メモ→リロード→任意項目→削除の一連の操作、複数Storage、旧データ移行、入力エラー、320px幅・長文のレイアウトを検証します。検索Dialogのdebounce・IME・pagination・0件・エラー・中断・フォーカス制御の既存テストも維持しています。E2E/実APIテストは実行前に本番ビルドを作成し、PlaywrightがVite previewを起動・終了します。
+- 単体テスト：単価×数量、購入合計、流用/未入力/0円の区別、数量ベースの集計、価格入力の正規化と上限、部分更新のinvariant、カテゴリごとのsingle/multiple制約、製品置換と価格リセット、任意項目の追加・名前変更・削除、persist対象・復元・v1/v2→v3 migration・不正データ・保存障害。既存のAPI schema・HTTP/通信エラー・中断・retry方針・スペック表示も検証します。
+- E2E：APIを固定レスポンスに置き換え、PC/モバイルで検索→追加→単価/数量→流用/購入→リロード→任意項目→削除、製品名からの置換、複数Storageの独立編集、メモの除去、旧データ移行、入力エラーを検証します。9カテゴリを埋めたシートの高さ、desktop列の整列、320px幅を含む操作要素の重なり・横スクロールも確認します。検索Dialogのdebounce・IME・pagination・0件・エラー・中断・フォーカス制御の既存テストを維持し、追加/置換両モードでpagination・中断・フォーカス復帰を検証しています。E2E/実APIテストは実行前に本番ビルドを作成し、PlaywrightがVite previewを起動・終了します。
 - `test:live`：9カテゴリの実レスポンスをschema検証し、ブラウザから `9800x3d` 検索 → 追加 → リロード → 削除まで確認します。ネットワークと公開APIの稼働状況に依存します。
 - スクリーンショット・失敗時traceは `test-results/` に出力します（Git対象外）。
 - GitHub Actions（`.github/workflows/ci.yml`）：PRとmainへのpushでNode.js 24上の `npm ci` → lint → typecheck → unit test → production build → Playwright Chromiumセットアップ → desktop/mobile E2Eを実行します。通常CIは公開APIに依存せず、`test:live` は含めません。
@@ -79,7 +79,7 @@ src/
   components/         共通Dialog・出典表記
   domain/             9カテゴリ定義・主要スペックの表示変換・共通円フォーマット
   features/
-    build/            構成シート・行内編集・詳細Dialog・サマリー・計算・schema/migration・store
+    build/            高密度シート・行内編集・任意項目名Dialog・サマリー・計算・schema/migration・store
     search/           検索Dialog・debounce・検索状態表示
   test/fixtures/      実APIから取得したCPU検索レスポンス
   App.tsx             画面と検索Dialogの組み立て
@@ -97,24 +97,39 @@ type EditableFields = {
   quantity: number
   price: number | null
   source: 'buy' | 'owned'
-  memo: string
 }
 type BuildItem =
   | (EditableFields & { id: string; kind: 'catalog'; category: PartCategory; product: CatalogProduct })
   | (EditableFields & { id: string; kind: 'custom'; name: string })
 ```
 
-各Itemに独立したIDを持ち、同じカテゴリ/製品を複数追加できます。ユーザーの価格・数量・購入区分・メモを `CatalogProduct` へ書き込みません。任意項目に偽のカタログ製品や既存9カテゴリを割り当てません。
+各Itemに独立したIDを持ちます。ユーザーの価格・数量・購入区分を `CatalogProduct` へ書き込みません。任意項目に偽のカタログ製品や既存9カテゴリを割り当てません。Phase 2.1でメモ機能・`memo` fieldは削除しました。
 
-Store actionsは `addItem` / `addCustomItem` / `updateItem`（価格・数量・購入区分・メモの部分更新）/ `updateCustomDetails`（名前・メモ）/ `removeItem` / `clearBuild`。編集actionはZod検証後に更新し、不正な更新はまとめて拒否します。ID・kind・製品・カテゴリは部分更新の対象外です。
+Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（価格・数量・購入区分の部分更新）/ `renameCustomItem` / `removeItem` / `clearBuild`。編集actionはZod検証後に更新し、不正な更新はまとめて拒否します。ID・kind・製品・カテゴリは部分更新の対象外です。
+
+### カテゴリと製品変更
+
+`src/domain/categories.ts` の `cardinality` がUIとStore共通の定義です。
+
+| 区分 | カテゴリ | 操作 |
+| --- | --- | --- |
+| single | CPU、CPUクーラー、マザーボード、GPU、電源、ケース | 空欄で「選択」。選択後は追加ボタンなし。製品名から置換 |
+| multiple | メモリ、ストレージ、ケースファン、その他/任意項目 | 選択後もカテゴリヘッダー右側に「＋ 追加」。同じ製品も複数追加可能 |
+
+- カタログ製品名（スペックを含む表示領域）のクリック/Enterで、同じ中央配置検索Dialogを**置換モード**で開きます。追加と置換は検索結果ボタン・Store actionを区別します。
+- `replaceItem(id, product)` は同じカテゴリのカタログ製品のみを受け付け、**ID・quantity・sourceを保持し、priceを必ず `null` へリセット**します。明示的に同じ製品を選び直した場合も価格をリセットします。他の行には影響しません。
+- 置換をキャンセルした場合は元の見積もりを保持します。検索終了後は元の製品名にフォーカスを戻し、singleカテゴリの初回追加後は新しく表示された製品名へ移動します。
+- 任意項目名をクリックすると、名前だけを編集する小型Dialogが開きます。名前変更は価格・数量・購入区分を保持します。
+- singleは新規追加の制約です。旧保存データにsingleカテゴリの複数行があっても削除・統合せず、各行を表示して個別置換/削除できます。quantity自体はsingleでも1〜99で編集できます。
 
 ### 保存schema / migration
 
-- 保存キー：`pc-build-sheet:build`、**schema version：`2`**。保存対象は `items` のみで、検索結果・モーダル状態・入力途中のdraft・actionsは保存しません。
-- **version 1 → 2**：`checkedStorage` で旧形式を検証した後、Zustand persistの `migrate` で各Itemへ `kind: 'catalog'` を補完します。ID・製品スナップショット・quantity・price（0/nullを含む）・source・memoを保持し、version 2形式で保存し直します。
+- 保存キー：`pc-build-sheet:build`、**schema version：`3`**。保存対象は `items` のみで、検索結果・モーダル状態・入力途中のdraft・actionsは保存しません。category cardinalityは静的なUI/Store設定で、保存データには含めません。
+- **version 1 → 3**：`checkedStorage` で旧形式を検証し、Zustand persistの `migrate` で `kind: 'catalog'` を補完、旧 `memo` を除去します。
+- **version 2 → 3**：カタログ/任意項目ともに旧 `memo` を除去します。両経路ともID・製品/名前・quantity・price（0/nullを含む）・source・行順を保持し、version 3形式で保存し直します。旧メモの内容は移行時に無視します。
 - 未知version、重複ID、製品とカテゴリの不一致、必須フィールド欠落、編集値の範囲違反などはmigrationしません。値を推測・丸め・切り詰めして復元することはありません。
 - 保存データもZod検証し、読込/書込失敗を画面に表示します。読めない保存データは自動消去せず、次の構成変更時に更新します。保存失敗時も画面上の構成は保持します。
-- 保存はこのブラウザ内のみで、端末間同期はありません。次のschema変更でもversionを上げ、v1/v2からの移行経路を維持してください。
+- 保存はこのブラウザ内のみで、端末間同期はありません。次のschema変更でもversionを上げ、v1/v2/v3からの移行経路を維持してください。
 
 ### 見積もりの入力・計算ルール
 
@@ -124,10 +139,11 @@ Store actionsは `addItem` / `addCustomItem` / `updateItem`（価格・数量・
 | --- | --- |
 | 単価 | 日本円の整数、0〜100,000,000円。未入力は `null`、0円とは別扱い |
 | 入力確定 | フォーカスを外すかEnterで保存。空欄確定で `null`。入力中はdraftを維持し、Escで未確定変更を取消 |
+| 単価の表示 | 通常は `￥96,800`、フォーカス時は数値＋円のinline edit。入力要素の数値をフォーカス時に書き換えず、選択や削除操作を安定させる |
 | 入力エラー | 負数・小数・指数表記・上限超過などは保存せずエラー表示。全角数字と正しい3桁区切りは正規化可能 |
 | 数量 | 1〜99の整数。−/＋で編集。メモリkitなどもカタログ製品1商品を数量1として扱う |
 | 購入/流用 | 初期値は購入。流用へ切り替えても単価を保持し、購入へ戻すと再利用 |
-| 名前 / メモ | 任意項目名は空白以外の1〜200文字、メモは最大1,000文字 |
+| 名前 | 任意項目名は空白以外の1〜200文字 |
 
 計算は `features/build/totals.ts` の純粋関数 `getItemSubtotal` / `getBuildSummary`、円表示は `domain/currency.ts` の `formatYen` に集約しています。
 
@@ -140,13 +156,13 @@ Store actionsは `addItem` / `addCustomItem` / `updateItem`（価格・数量・
 
 ## 現在の機能
 
-- 9カテゴリを常時表示する構成シート、PCの2カラム/スマートフォンの1カラム
+- 9カテゴリを常時表示する構成シート。広いPC画面はシート＋サマリーの2カラム、幅1100px以下ではシート幅を優先してサマリーを下に配置
 - 各カテゴリ共通の中央配置wide modal、基本検索、ページ移動、主要スペック表示
   - PC：幅最大900px・高さ85dvh。モバイル（幅700px以下）：四辺に12pxの余白を残すほぼ全画面表示。タイトル・検索欄を上部に残し、結果領域だけをスクロールします。
-  - 共通 `Dialog` は用途を明示する `variant="wide" | "confirm" | "edit"` を必須指定。検索は `ProductSearchDialog`、構成リセットは小型confirm、名前・メモ編集は独立した小型editを使用します。
-- 商品名・主要スペックを主情報とするシート行に、コンパクトな購入/流用toggle・単価入力・数量stepper・小計を配置。狭い画面はカテゴリと商品を縦積みにし、入力操作は2列に折り返します。
-- メモは「メモを追加/編集」から編集。保存済みメモを行内で表示し、長文は最大3行のスクロール領域に収めます。
-- 「その他」セクションの「任意項目を追加」からOS・ケーブル・アクセサリ等を追加。名前・メモを入力した後、シート上で価格・数量・購入/流用を編集できます。
+  - 共通 `Dialog` は用途を明示する `variant="wide" | "confirm" | "edit"` を必須指定。検索は追加/置換共通の `ProductSearchDialog`、構成リセットは小型confirm、任意項目名は小型editを使用します。
+- desktop：列見出しを上部に一度だけ表示し、製品名（主要スペックは小さな2行目）・区分・単価・数量・小計・削除を共通CSS Gridで横一列に配置。空カテゴリ約50px、1製品入り約75px、multipleの追加1行約47pxを目安にしています。長い製品名/specは省略表示し、titleとアクセシブル名で全文を確認できます。
+- 幅800px以下：製品表示と操作を2段、幅480px以下は小計を3段目に配置。ラベル付きの縦フォームへ戻さず、320px幅でも操作領域の重なりと横スクロールを防ぎます。モバイルの製品名は最大2行です。
+- 「その他」セクションの「任意項目を追加」からOS・ケーブル・アクセサリ等を追加。名前を入力した後、共通のシート行で価格・数量・購入/流用を編集できます。
 - パーツ/任意項目の追加・個別削除・構成リセット、ブラウザへの自動保存
 - パーツ数・購入合計・流用品数・価格未入力数。小計/サマリー変更の読み上げと、Item別の入力/数量操作ラベル
 - 検索中・入力待ち・0件・APIエラー・保存障害の表示
