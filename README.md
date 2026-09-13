@@ -58,7 +58,7 @@ npm run test:live
 - `GET /v1/search?category=cpu&q=9800x3d&limit=20&offset=0`：製品検索。空の検索語は `q` を省略し、カテゴリ一覧を取得します。
 - 1ページ20件。続きは `meta.next_offset` を使用します。`meta.returned` は表示中の件数で、総ヒット数ではありません。
 - 認証なし、`credentials: 'omit'`、公開CORSを使ってブラウザから直接接続します。
-- 300ms debounce、IME変換中の検索抑制、検索語変更・Drawer終了時のAbortSignalによる中断。
+- 300ms debounce、IME変換中の検索抑制、検索語変更・モーダル終了時のAbortSignalによる中断。
 - Queryのメモリキャッシュは60秒。通信/timeout/502/503/504は最大1回のbackoff再試行（`Retry-After` が60秒を超える場合は自動再試行なし）。429や400/500、schemaエラーは自動再試行しません。手動再試行も `Retry-After` を尊重します。
 - 個々のHTTPリクエストは15秒でtimeout。利用者には日本語のエラーを表示し、レスポンス本文やstack traceは表示しません。
 
@@ -79,9 +79,9 @@ src/
   domain/             9カテゴリ定義・主要スペックの表示変換
   features/
     build/            構成シート・サマリー・Build Item・Zustand store
-    search/           検索Drawer・debounce・検索状態表示
+    search/           検索Dialog・debounce・検索状態表示
   test/fixtures/      実APIから取得したCPU検索レスポンス
-  App.tsx             画面とDrawerの組み立て
+  App.tsx             画面と検索Dialogの組み立て
   main.tsx            React・QueryClientの初期化
   styles.css          デザイン変数・レスポンシブCSS
 e2e/                  固定レスポンスE2E・実APIスモークテスト
@@ -91,16 +91,18 @@ e2e/                  固定レスポンスE2E・実APIスモークテスト
 
 構成は `BuildItem[]` です。各Itemに独立したID・category・製品スナップショット・quantity・price・source（購入/流用）・memoを持ち、ユーザーの価格やメモをCatalogProductへ書き込みません。同じカテゴリ/製品を複数追加できます。
 
-保存キーは `pc-build-sheet:build`、schema versionは `1`。保存対象は `items` のみで、検索結果・Drawer状態・actionsは保存しません。保存データもZod検証し、読込/書込失敗を画面に表示します。読めない保存データは自動消去せず、次の構成変更時に更新します。保存はこのブラウザ内のみで、端末間同期はありません。
+保存キーは `pc-build-sheet:build`、schema versionは `1`。保存対象は `items` のみで、検索結果・モーダル状態・actionsは保存しません。保存データもZod検証し、読込/書込失敗を画面に表示します。読めない保存データは自動消去せず、次の構成変更時に更新します。保存はこのブラウザ内のみで、端末間同期はありません。
 
 ## 現在の機能
 
 - 9カテゴリを常時表示する構成シート、PCの2カラム/スマートフォンの1カラム
-- 各カテゴリ共通の検索Drawer、基本検索、ページ移動、主要スペック表示
+- 各カテゴリ共通の中央配置wide modal、基本検索、ページ移動、主要スペック表示
+  - PC：幅最大900px・高さ85dvh。モバイル（幅700px以下）：四辺に12pxの余白を残すほぼ全画面表示。タイトル・検索欄を上部に残し、結果領域だけをスクロールします。
+  - 共通 `Dialog` は用途を明示する `variant="wide" | "confirm"` を必須指定。検索は `ProductSearchDialog`、構成リセットは小型のconfirmを使用します。
 - パーツの追加・個別削除・構成リセット、ブラウザへの自動保存
 - 選択済みパーツ数、合計金額/推定消費電力の未計算欄（`—`）
 - 検索中・入力待ち・0件・APIエラー・保存障害の表示
-- キーボード操作、Escapeで閉じる、モーダル内フォーカス制御と終了時の復帰
+- キーボード操作、Escape・backdropクリックで閉じる、モーダル内フォーカス制御と終了時の復帰。文字選択のドラッグが背景へ抜けても閉じません。
 
 ## 今後の予定 / TODO
 

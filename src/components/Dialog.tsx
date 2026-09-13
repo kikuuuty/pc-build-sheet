@@ -6,12 +6,13 @@ type Props = {
   titleId: string
   onClose: () => void
   children: ReactNode
-  drawer?: boolean
+  variant: 'wide' | 'confirm'
   initialFocus?: RefObject<HTMLElement | null>
 }
 
-export function Dialog({ title, titleId, onClose, children, drawer = false, initialFocus }: Props) {
+export function Dialog({ title, titleId, onClose, children, variant, initialFocus }: Props) {
   const ref = useRef<HTMLDialogElement>(null)
+  const pressedBackdrop = useRef(false)
 
   useEffect(() => {
     const dialog = ref.current!
@@ -30,11 +31,35 @@ export function Dialog({ title, titleId, onClose, children, drawer = false, init
   return (
     <dialog
       ref={ref}
-      className={drawer ? 'dialog drawer' : 'dialog confirm-dialog'}
+      className={`dialog ${variant}-dialog`}
       aria-labelledby={titleId}
       onCancel={(event) => { event.preventDefault(); onClose() }}
+      onKeyDown={(event) => {
+        if (event.key !== 'Tab') return
+        const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]'))
+          .filter((element) => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length > 0)
+        const first = focusable[0]
+        const last = focusable[focusable.length - 1]
+        // Keep Tab cycling inside the modal rather than moving into browser chrome.
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last?.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first?.focus()
+        }
+      }}
+      onPointerDown={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect()
+        pressedBackdrop.current = event.target === event.currentTarget
+          && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)
+      }}
+      onPointerCancel={() => { pressedBackdrop.current = false }}
       onClick={(event) => {
-        if (event.target !== event.currentTarget) return
+        // Selecting text can end outside the dialog; only a full backdrop click closes it.
+        const startedOnBackdrop = pressedBackdrop.current
+        pressedBackdrop.current = false
+        if (!startedOnBackdrop || event.target !== event.currentTarget) return
         const rect = event.currentTarget.getBoundingClientRect()
         if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose()
       }}

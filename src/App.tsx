@@ -5,7 +5,7 @@ import { Attribution } from './components/Attribution'
 import { BuildSheet } from './features/build/BuildSheet'
 import { BuildSummary } from './features/build/BuildSummary'
 import { usePersistenceStatus } from './features/build/store'
-import { ProductSearchDrawer } from './features/search/ProductSearchDrawer'
+import { ProductSearchDialog } from './features/search/ProductSearchDialog'
 
 export function App() {
   const [category, setCategory] = useState<CategoryDefinition | null>(null)
@@ -27,7 +27,7 @@ export function App() {
         <footer className="app-footer"><span>自作PC構成シート</span><Attribution /></footer>
       </main>
       <div className="sr-only" role="status">{announcement}</div>
-      {category && <ProductSearchDrawer key={category.id} category={category} onClose={() => setCategory(null)} onAdded={(name) => { setAnnouncement(`${name}を構成に追加しました`); setCategory(null) }} />}
+      {category && <ProductSearchDialog key={category.id} category={category} onClose={() => setCategory(null)} onAdded={(name) => { setAnnouncement(`${name}を構成に追加しました`); setCategory(null) }} />}
     </>
   )
 }

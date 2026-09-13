@@ -83,10 +83,10 @@ svg { flex-shrink: 0; }
 .attribution span { display: block; font-size: 9px; }
 .app-footer .attribution { text-align: right; }
 .storage-warning { padding: 12px 16px; border: 1px solid #eed8a7; background: #fffbeb; border-radius: 5px; font-size: 12px; line-height: 1.8; margin-bottom: 16px; }
-.dialog { color: #18181b; background: var(--surface); border: 1px solid var(--border); padding: 0; }
+.dialog { color: #18181b; background: var(--surface); border: 1px solid var(--border); padding: 0; margin: auto; }
 .dialog::backdrop { background: rgb(24 24 27 / 28%); }
-.drawer { margin: 0 0 0 auto; height: 100dvh; max-height: 100dvh; width: min(580px, 100%); max-width: 100%; border-width: 0 0 0 1px; }
-.drawer[open] { display: flex; flex-direction: column; }
+.wide-dialog { width: min(900px, calc(100vw - 32px)); max-width: none; height: 85dvh; max-height: 85dvh; border-radius: 8px; box-shadow: 0 8px 28px rgb(24 24 27 / 12%); overflow: hidden; }
+.wide-dialog[open] { display: flex; flex-direction: column; }
 .dialog-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 22px 24px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .dialog-header h2 { font-size: 17px; }
 .search-controls { padding: 22px 24px 17px; flex-shrink: 0; }
@@ -155,6 +155,7 @@ svg { flex-shrink: 0; }
   .summary { position: static; padding: 21px; }
   .app-footer { flex-direction: column; gap: 12px; }
   .app-footer .attribution { text-align: left; }
+  .wide-dialog { width: calc(100vw - 24px); height: calc(100dvh - 24px); max-height: calc(100dvh - 24px); }
   .dialog-header { padding: 17px 18px; }
   .search-controls { padding: 20px 18px 14px; }
   .search-input { font-size: 16px; }

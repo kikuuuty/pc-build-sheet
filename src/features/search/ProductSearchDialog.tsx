@@ -12,7 +12,7 @@ import { useDebouncedValue } from './useDebouncedValue'
 
 type Props = { category: CategoryDefinition; onClose: () => void; onAdded: (name: string) => void }
 
-export function ProductSearchDrawer({ category, onClose, onAdded }: Props) {
+export function ProductSearchDialog({ category, onClose, onAdded }: Props) {
   const [input, setInput] = useState('')
   const [composing, setComposing] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -22,7 +22,7 @@ export function ProductSearchDrawer({ category, onClose, onAdded }: Props) {
   const waiting = composing || query !== debounced
 
   return (
-    <Dialog drawer title={`${category.label}を選択`} titleId="search-title" onClose={onClose} initialFocus={inputRef}>
+    <Dialog variant="wide" title={`${category.label}を選択`} titleId="search-title" onClose={onClose} initialFocus={inputRef}>
       <div className="search-controls">
         <label className="search-label" htmlFor="product-search">製品名・型番で検索</label>
         <div className="search-input-wrapper">

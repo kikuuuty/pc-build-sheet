@@ -23,7 +23,7 @@ export function BuildSummary() {
         <button type="button" className="text-button reset-button" disabled={!items.length} onClick={() => setConfirming(true)}><RotateCcw size={15} aria-hidden="true" />構成をリセット</button>
       </div>
       {confirming && (
-        <Dialog title="構成をリセットしますか？" titleId="reset-title" onClose={() => setConfirming(false)}>
+        <Dialog variant="confirm" title="構成をリセットしますか？" titleId="reset-title" onClose={() => setConfirming(false)}>
           <div className="confirm-content">
             <p>選択済みのパーツをすべて削除します。</p>
             <div className="dialog-actions">
