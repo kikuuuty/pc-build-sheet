@@ -1,0 +1,30 @@
+{
+  "data": [{
+    "id": 372,
+    "upstream_id": "7ab840c3-8c52-4ced-a65c-7b0922ca479e",
+    "upstream_key": "CPU/7ab840c3-8c52-4ced-a65c-7b0922ca479e",
+    "category": "cpu",
+    "manufacturer": "AMD",
+    "name": "AMD Ryzen 7 9800X3D",
+    "series": "Ryzen 7 9000",
+    "variant": "9800X3D",
+    "release_year": 2024,
+    "manufacturer_url": "https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-7-9800x3d.html",
+    "specs": {
+      "manufacturer": "AMD", "family": "Ryzen 7", "generation": "9000", "socket": "AM5",
+      "microarchitecture": "Zen 5", "core_family": "Granite Ridge", "base_clock_ghz": 4.7,
+      "boost_clock_ghz": 5.2, "tdp_w": 120, "ppt_w": 162, "max_memory_gb": 256,
+      "core_count": 8, "thread_count": 16, "performance_cores": 0, "efficiency_cores": 0,
+      "includes_cooler": 0
+    }
+  }],
+  "meta": {
+    "limit": 20, "offset": 0, "returned": 1, "has_more": false, "next_offset": null,
+    "window_limit": 1000, "window_exhausted": false,
+    "source": {
+      "name": "BuildCores OpenDB", "url": "https://github.com/buildcores/buildcores-open-db",
+      "license": "ODC-By 1.0", "license_url": "https://opendatacommons.org/licenses/by/1-0/",
+      "attribution": "Contains information from BuildCores OpenDB, made available under the ODC Attribution License."
+    }
+  }
+}
