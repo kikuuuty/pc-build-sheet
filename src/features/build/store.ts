@@ -2,14 +2,21 @@ import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 import { z } from 'zod'
 import type { CatalogProduct } from '../../api/catalog/types'
-import { persistedBuildSchema, type BuildItem } from './schemas'
+import {
+  buildItemSchema, customItemInputSchema, customNameSchema, itemChangesSchema,
+  legacyBuildSchema, migrateV1Build, persistedBuildSchema,
+  type BuildItem, type CustomItemInput, type ItemChanges,
+} from './schemas'
 
 export const BUILD_STORAGE_KEY = 'pc-build-sheet:build'
-export const BUILD_STORAGE_VERSION = 1
+export const BUILD_STORAGE_VERSION = 2
 
 type BuildState = {
   items: BuildItem[]
   addItem: (product: CatalogProduct) => void
+  addCustomItem: (input: CustomItemInput) => boolean
+  updateItem: (id: string, changes: ItemChanges) => boolean
+  updateCustomDetails: (id: string, details: { name: string; memo: string }) => boolean
   removeItem: (id: string) => void
   clearBuild: () => void
 }
@@ -17,10 +24,10 @@ type BuildState = {
 // Persistence diagnostics are ephemeral, and never saved into the build.
 export const usePersistenceStatus = create<{ issue: string | null }>(() => ({ issue: null }))
 
-const persistedEnvelopeSchema = z.object({
-  version: z.literal(BUILD_STORAGE_VERSION),
-  state: persistedBuildSchema,
-})
+const persistedEnvelopeSchema = z.discriminatedUnion('version', [
+  z.object({ version: z.literal(1), state: legacyBuildSchema }),
+  z.object({ version: z.literal(BUILD_STORAGE_VERSION), state: persistedBuildSchema }),
+])
 
 const browserStorage: StateStorage = {
   getItem: (key) => window.localStorage.getItem(key),
@@ -61,14 +68,42 @@ export function createBuildStore(
   report: (issue: string | null) => void = (issue) => usePersistenceStatus.setState({ issue }),
 ) {
   return create<BuildState>()(persist(
-    (set) => ({
+    (set, get) => ({
       items: [],
       addItem: (product) => set((state) => ({
         items: [...state.items, {
-          id: crypto.randomUUID(), category: product.category, product,
+          id: crypto.randomUUID(), kind: 'catalog', category: product.category, product,
           quantity: 1, price: null, source: 'buy', memo: '',
         }],
       })),
+      addCustomItem: (input) => {
+        const parsed = customItemInputSchema.safeParse(input)
+        if (!parsed.success) return false
+        const item = buildItemSchema.safeParse({
+          id: crypto.randomUUID(), kind: 'custom', quantity: 1, price: null, source: 'buy', memo: '', ...parsed.data,
+        })
+        if (!item.success) return false
+        set((state) => ({ items: [...state.items, item.data] }))
+        return true
+      },
+      updateItem: (id, changes) => {
+        const patch = itemChangesSchema.safeParse(changes)
+        const item = get().items.find((item) => item.id === id)
+        if (!patch.success || !item) return false
+        const parsed = buildItemSchema.safeParse({ ...item, ...patch.data })
+        if (!parsed.success) return false
+        set((state) => ({ items: state.items.map((item) => item.id === id ? parsed.data : item) }))
+        return true
+      },
+      updateCustomDetails: (id, details) => {
+        const item = get().items.find((item) => item.id === id)
+        const name = customNameSchema.safeParse(details.name)
+        if (item?.kind !== 'custom' || !name.success) return false
+        const parsed = buildItemSchema.safeParse({ ...item, name: name.data, memo: details.memo })
+        if (!parsed.success) return false
+        set((state) => ({ items: state.items.map((item) => item.id === id ? parsed.data : item) }))
+        return true
+      },
       removeItem: (id) => set((state) => ({ items: state.items.filter((item) => item.id !== id) })),
       clearBuild: () => set({ items: [] }),
     }),
@@ -77,6 +112,10 @@ export function createBuildStore(
       version: BUILD_STORAGE_VERSION,
       storage: createJSONStorage(() => checkedStorage(storage, report)),
       partialize: (state) => ({ items: state.items }),
+      migrate: (state, version) => {
+        if (version === 1) return migrateV1Build(state)
+        throw new Error('Unsupported build version')
+      },
       merge: (persisted, current) => {
         const parsed = persistedBuildSchema.safeParse(persisted)
         return parsed.success ? { ...current, items: parsed.data.items } : current

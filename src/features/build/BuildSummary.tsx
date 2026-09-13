@@ -2,22 +2,28 @@ import { useState } from 'react'
 import { ClipboardList, RotateCcw } from 'lucide-react'
 import { Dialog } from '../../components/Dialog'
 import { useBuildStore } from './store'
+import { getBuildSummary } from './totals'
+import { formatYen } from '../../domain/currency'
 
 export function BuildSummary() {
   const items = useBuildStore((state) => state.items)
   const clearBuild = useBuildStore((state) => state.clearBuild)
   const [confirming, setConfirming] = useState(false)
-  const count = items.reduce((sum, item) => sum + item.quantity, 0)
+  const summary = getBuildSummary(items)
 
   return (
     <aside className="summary" aria-labelledby="summary-title">
       <h2 id="summary-title"><ClipboardList size={18} aria-hidden="true" />構成サマリー</h2>
-      <dl>
-        <div className="summary-count"><dt>選択済みパーツ</dt><dd aria-live="polite"><strong>{count}</strong><span>点</span></dd></div>
-        <div className="summary-total"><dt>合計金額</dt><dd>—</dd></div>
-        <div><dt>推定消費電力</dt><dd>—</dd></div>
-      </dl>
-      <p className="summary-note">価格の入力・電力の概算は今後対応予定です。</p>
+      <div role="status" aria-atomic="true">
+        <dl>
+          <div className="summary-count"><dt>パーツ</dt><dd><strong>{summary.partCount}</strong><span>点</span></dd></div>
+          <div className="summary-total"><dt>購入合計</dt><dd>{formatYen(summary.purchaseTotal)}</dd></div>
+          <div className="summary-owned"><dt>流用品</dt><dd>{summary.ownedCount}<span>点</span></dd></div>
+          <div className="summary-unpriced"><dt>価格未入力</dt><dd>{summary.unpricedCount}<span>点</span></dd></div>
+        </dl>
+        {summary.unpricedCount > 0 && <p className="summary-incomplete">※ 価格未入力 {summary.unpricedCount}点。購入合計は入力済み分のみで、構成全体の総額ではありません。</p>}
+      </div>
+      <p className="summary-note">価格はユーザー入力の単価です。<br /><span id="owned-rule">流用品は購入合計に含まれません。</span></p>
       <div className="summary-footer">
         <p>選んだパーツは、このブラウザに自動保存されます。</p>
         <button type="button" className="text-button reset-button" disabled={!items.length} onClick={() => setConfirming(true)}><RotateCcw size={15} aria-hidden="true" />構成をリセット</button>
