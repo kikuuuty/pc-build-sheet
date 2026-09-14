@@ -43,17 +43,17 @@ function CategorySection({ category, index, items, onSearch, onAnnounce }: {
   const [addingCustom, setAddingCustom] = useState(false)
   const removeItem = useBuildStore((state) => state.removeItem)
   const selected = items.length > 0
-  const showAdd = !selected || category.cardinality === 'multiple'
+  const canAdd = category.cardinality === 'multiple'
   return (
     <section ref={sectionRef} className={`category-row${selected ? ' has-items' : ''}`} aria-labelledby={`category-${category.id}`}>
       <div className="category-header">
         <h3 id={`category-${category.id}`}><span className="category-number" aria-hidden="true">{index ? String(index).padStart(2, '0') : '＋'}</span>{category.label}</h3>
-        {showAdd && <button ref={addRef} type="button" className={selected ? 'add-another' : 'select-part'}
+        {(!selected || canAdd) && <button ref={addRef} type="button" className={selected ? 'add-another' : 'select-part'} aria-haspopup="dialog"
           aria-label={category.id === 'custom' ? '任意項目を追加' : `${category.label}を${selected ? '追加' : '選択'}`}
           onClick={() => {
             if (category.id === 'custom') setAddingCustom(true)
             else onSearch({ category, target: { mode: 'add' }, returnFocus: category.cardinality === 'single' ? firstItemRef : addRef })
-          }}><Plus size={14} aria-hidden="true" />{selected ? '追加' : category.id === 'custom' ? '任意項目を追加' : `${category.label}を選択`}</button>}
+          }}>{selected ? <><Plus size={14} aria-hidden="true" />追加</> : <><span aria-hidden="true">—</span>{category.id === 'custom' ? '任意項目を入力' : 'パーツを選択'}</>}</button>}
       </div>
       {selected && <ul className="build-items">
         {items.map((item, index) => <BuildItemRow key={item.id} item={item} productRef={index === 0 ? firstItemRef : undefined}

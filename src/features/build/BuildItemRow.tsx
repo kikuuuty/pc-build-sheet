@@ -25,7 +25,8 @@ export function BuildItemRow({ item, productRef, onSearch, onRemove, onAnnounce 
 
   return (
     <li className="build-item" aria-labelledby={`${id}-name`}>
-      <button ref={openerRef} type="button" className="product-selector" title={name}
+      {/* Keep the product opener separate from the sibling controls to avoid opening search when editing them. */}
+      <button ref={openerRef} type="button" className="product-selector" title={name} aria-haspopup="dialog"
         aria-label={`${name}${item.kind === 'catalog' ? 'を変更' : 'の名前を編集'}`} onClick={() => {
           if (item.kind === 'custom') setEditing(true)
           else {

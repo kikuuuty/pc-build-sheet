@@ -16,8 +16,8 @@ export function BuildSummary() {
       <h2 id="summary-title"><ClipboardList size={18} aria-hidden="true" />構成サマリー</h2>
       <div role="status" aria-atomic="true">
         <dl>
-          <div className="summary-count"><dt>パーツ</dt><dd><strong>{summary.partCount}</strong><span>点</span></dd></div>
           <div className="summary-total"><dt>購入合計</dt><dd>{formatYen(summary.purchaseTotal)}</dd></div>
+          <div className="summary-count"><dt>パーツ</dt><dd><strong>{summary.partCount}</strong><span>点</span></dd></div>
           <div className="summary-owned"><dt>流用品</dt><dd>{summary.ownedCount}<span>点</span></dd></div>
           <div className="summary-unpriced"><dt>価格未入力</dt><dd>{summary.unpricedCount}<span>点</span></dd></div>
         </dl>

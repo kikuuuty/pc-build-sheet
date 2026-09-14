@@ -46,7 +46,7 @@ async function expectCenteredSearchDialog(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 }
 
-test('9 categories, real build actions, persistence, reset and responsive layout', async ({ page, isMobile }, testInfo) => {
+test('9 categories, real build actions, persistence, reset and responsive layout', async ({ page }, testInfo) => {
   const issues: string[] = []
   page.on('pageerror', (error) => issues.push(error.message))
   page.on('console', (message) => { if (['warning', 'error'].includes(message.type())) issues.push(message.text()) })
@@ -54,12 +54,10 @@ test('9 categories, real build actions, persistence, reset and responsive layout
   await expect(page.getByRole('heading', { name: '自作PC構成シート', exact: true })).toBeVisible()
   const sheet = page.getByRole('region', { name: '構成パーツ' })
   for (const category of partCategories) await expect(sheet.getByRole('heading', { name: category.label, exact: true })).toBeVisible()
-  if (!isMobile) {
-    for (const section of await sheet.locator('.category-row').all()) {
-      const height = (await section.boundingBox())!.height
-      expect(height).toBeGreaterThanOrEqual(45)
-      expect(height).toBeLessThanOrEqual(55)
-    }
+  for (const section of await sheet.locator('.category-row').all()) {
+    const height = (await section.boundingBox())!.height
+    expect(height).toBeGreaterThanOrEqual(68)
+    expect(height).toBeLessThanOrEqual(72)
   }
   await expect(page.locator('.search-result')).toHaveCount(0)
   await expect(page.locator('body')).toHaveJSProperty('scrollWidth', await page.evaluate(() => window.innerWidth))
@@ -108,6 +106,82 @@ test('all category dialogs use the same search interaction and Escape restores f
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(opener).toBeFocused()
   }
+})
+
+test('broad selection and product areas support pointer and keyboard without intercepting row controls', async ({ page }, testInfo) => {
+  await page.goto('/')
+  const viewport = page.viewportSize()!
+  for (const width of [320, 393, 740, 1024, 1280, 1440]) {
+    await page.setViewportSize({ width, height: 960 })
+    for (const category of partCategories) {
+      const section = page.getByRole('region', { name: category.label, exact: true })
+      const opener = section.getByRole('button', { name: `${category.label}を選択`, exact: true })
+      await expect(opener).toHaveText('—パーツを選択')
+      await expect(section.getByRole('button', { name: `${category.label}を追加`, exact: true })).toHaveCount(0)
+      const box = (await opener.boundingBox())!
+      expect(box.width).toBeGreaterThanOrEqual(100)
+      expect(box.height).toBeGreaterThanOrEqual(44)
+      const heading = (await section.getByRole('heading').boundingBox())!
+      expect(box.y).toBeGreaterThanOrEqual(heading.y + heading.height)
+      const height = (await section.boundingBox())!.height
+      expect(height).toBeGreaterThanOrEqual(68)
+      expect(height).toBeLessThanOrEqual(72)
+      expect(await section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath(`empty-sheet-${width}.png`), fullPage: true })
+  }
+  await page.setViewportSize(viewport)
+  const section = page.getByRole('region', { name: 'CPU', exact: true })
+  const opener = section.getByRole('button', { name: 'CPUを選択', exact: true })
+  const box = (await opener.boundingBox())!
+  // The empty space away from the label must also open the existing search dialog.
+  await opener.click({ position: { x: box.width - 3, y: box.height - 3 } })
+  await expect(page.getByRole('dialog', { name: 'CPUを選択', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(opener).toBeFocused()
+  for (const key of ['Enter', 'Space']) {
+    await opener.press(key)
+    await expect(page.getByRole('dialog', { name: 'CPUを選択', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(opener).toBeFocused()
+  }
+  await section.getByText('パーツを選択').click()
+  await page.getByRole('button', { name: `${productName}を構成に追加`, exact: true }).click()
+  const row = section.locator('.build-item')
+  const product = row.getByRole('button', { name: `${productName}を変更`, exact: true })
+  await expect(product).toBeFocused()
+  const emptyProduct = page.getByRole('button', { name: 'CPUクーラーを選択', exact: true })
+  expect(Math.abs((await product.boundingBox())!.x - (await emptyProduct.boundingBox())!.x)).toBeLessThan(1)
+  await expect(section.getByRole('button', { name: 'CPUを追加', exact: true })).toHaveCount(0)
+  for (const area of [product.locator('.product-name'), product.locator('.product-details')]) {
+    await area.click()
+    await expect(page.getByRole('dialog', { name: 'CPUを変更', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(product).toBeFocused()
+  }
+  const productBox = (await product.boundingBox())!
+  await product.click({ position: { x: productBox.width - 2, y: 1 } })
+  await expect(page.getByRole('dialog', { name: 'CPUを変更', exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  for (const key of ['Enter', 'Space']) {
+    await product.press(key)
+    await expect(page.getByRole('dialog', { name: 'CPUを変更', exact: true })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await expect(product).toBeFocused()
+  }
+  await row.getByRole('textbox').fill('10000')
+  await row.getByRole('textbox').press('Enter')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  for (const name of [`${productName}の数量を増やす`, `${productName}の数量を減らす`, '流用', '購入']) {
+    await row.getByRole('button', { name, exact: true }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  }
+  await expect(page.locator('.summary-total dd')).toHaveText('￥10,000')
+  await row.getByRole('button', { name: `${productName}を構成から削除`, exact: true }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(opener).toBeFocused()
+  await expect(row).toHaveCount(0)
 })
 
 for (const mode of ['add', 'replace'] as const) {
@@ -575,7 +649,8 @@ test('multiple category adds distinct products, replaces only the clicked row an
   await rows.first().getByRole('textbox').fill('-')
   await rows.first().getByRole('textbox').press('Tab')
   await expect(rows.first().getByRole('alert')).toBeVisible()
-  await rows.first().getByRole('button', { name: `${products[0].name}を変更`, exact: true }).click()
+  await rows.first().getByText(products[0].name, { exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'ストレージを変更', exact: true })).toBeVisible()
   await page.getByRole('button', { name: `${products[2].name}に置き換える`, exact: true }).click()
   await expect(rows).toHaveCount(2)
   await expect(rows.first().getByRole('textbox')).toHaveValue('')
@@ -583,7 +658,8 @@ test('multiple category adds distinct products, replaces only the clicked row an
   await expect(rows.last().getByRole('textbox')).toHaveValue('28000')
   await expect(page.locator('.summary-total dd')).toHaveText('￥28,000')
   await expect(page.locator('.summary-unpriced dd')).toHaveText('1点')
-  await rows.last().getByRole('button', { name: `${products[1].name}を変更`, exact: true }).click()
+  await rows.last().locator('.product-details').click()
+  await expect(page.getByRole('dialog', { name: 'ストレージを変更', exact: true })).toBeVisible()
   await page.getByRole('button', { name: `${products[0].name}に置き換える`, exact: true }).click()
   await expect(rows.last().getByRole('textbox')).toHaveValue('')
   await expect(rows.first().getByText(products[2].name, { exact: true })).toBeVisible()
@@ -629,6 +705,21 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
     expect(Math.max(...rowHeights)).toBeLessThanOrEqual(isMobile ? 135 : 60)
     expect(Math.max(...categoryHeights)).toBeLessThanOrEqual(isMobile ? 175 : 82)
     expect(sheetHeight).toBeLessThanOrEqual(isMobile ? 1450 : 850)
+    const summary = page.getByRole('complementary', { name: '構成サマリー', exact: true })
+    expect(await summary.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+    const total = (await summary.locator('.summary-total dd').boundingBox())!
+    const count = (await summary.locator('.summary-count').boundingBox())!
+    expect(count.y).toBeGreaterThan(total.y + total.height)
+    const summaryBox = (await summary.boundingBox())!
+    const sheetBox = (await sheet.boundingBox())!
+    if (width > 1100) {
+      expect(summaryBox.width).toBeGreaterThanOrEqual(280)
+      expect(summaryBox.width).toBeLessThanOrEqual(294)
+      expect(summaryBox.x - (sheetBox.x + sheetBox.width)).toBeGreaterThanOrEqual(20)
+      expect(summaryBox.x - (sheetBox.x + sheetBox.width)).toBeLessThanOrEqual(24)
+    } else {
+      expect(summaryBox.y).toBeGreaterThanOrEqual(sheetBox.y + sheetBox.height)
+    }
     for (const row of await rows.all()) {
       // Actual clickable rectangles, not just document overflow: no controls may overlap.
       const boxes = await row.locator('button, input').evaluateAll((elements) => elements.map((element) => {
@@ -642,6 +733,9 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
         expect(overlap, `overlapping controls at ${width}px`).toBe(false)
       }
       if (!isMobile) {
+        const headings = await sheet.locator('.sheet-columns > span').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x))
+        const columns = await row.locator(':scope > button, :scope > .source-toggle, :scope > .price-field, :scope > .quantity-stepper, :scope > .item-subtotal').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x))
+        for (let i = 0; i < headings.length; i++) expect(Math.abs(headings[i] - columns[i])).toBeLessThan(1)
         const centers = await row.locator(':scope > button, :scope > .source-toggle, :scope > .price-field, :scope > .quantity-stepper, :scope > .item-subtotal').evaluateAll((elements) => elements.map((element) => {
           const rect = element.getBoundingClientRect()
           return rect.y + rect.height / 2
@@ -649,6 +743,7 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
         expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(1)
       }
     }
+    await page.screenshot({ path: testInfo.outputPath(`filled-sheet-${width}.png`), fullPage: true })
   }
   const metricsPath = testInfo.outputPath('sheet-density.json')
   await writeFile(metricsPath, JSON.stringify(metrics, null, 2))
@@ -661,6 +756,7 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
   await page.getByRole('button', { name: `${extra.name}を構成に追加`, exact: true }).click()
   await expect(rows).toHaveCount(10)
   expect((await sheet.boundingBox())!.height - before).toBeLessThanOrEqual(isMobile ? 135 : 60)
+  await page.screenshot({ path: testInfo.outputPath('multiple-storage-sheet.png'), fullPage: true })
   const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as { version: number; state: { items: unknown[] } })
   expect(persisted.version).toBe(3)
   for (const item of persisted.state.items) expect(item).not.toHaveProperty('memo')
