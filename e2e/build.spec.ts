@@ -123,7 +123,11 @@ test('broad selection and product areas support pointer and keyboard without int
       expect(box.height).toBeGreaterThanOrEqual(44)
       const heading = (await section.getByRole('heading').boundingBox())!
       expect(box.y).toBeGreaterThanOrEqual(heading.y + heading.height)
-      const height = (await section.boundingBox())!.height
+      const sectionBox = (await section.boundingBox())!
+      expect(Math.abs(box.x - sectionBox.x)).toBeLessThan(1)
+      expect(Math.abs(box.width - sectionBox.width)).toBeLessThan(1)
+      expect(Math.abs(box.y + box.height - (sectionBox.y + sectionBox.height))).toBeLessThan(1)
+      const height = sectionBox.height
       expect(height).toBeGreaterThanOrEqual(68)
       expect(height).toBeLessThanOrEqual(72)
       expect(await section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
@@ -135,6 +139,9 @@ test('broad selection and product areas support pointer and keyboard without int
   const section = page.getByRole('region', { name: 'CPU', exact: true })
   const opener = section.getByRole('button', { name: 'CPUを選択', exact: true })
   const box = (await opener.boundingBox())!
+  await opener.hover()
+  await expect(opener).toHaveCSS('box-shadow', 'none')
+  await page.screenshot({ path: testInfo.outputPath('selection-row-hover.png'), fullPage: true })
   // The empty space away from the label must also open the existing search dialog.
   await opener.click({ position: { x: box.width - 3, y: box.height - 3 } })
   await expect(page.getByRole('dialog', { name: 'CPUを選択', exact: true })).toBeVisible()
@@ -152,7 +159,7 @@ test('broad selection and product areas support pointer and keyboard without int
   const product = row.getByRole('button', { name: `${productName}を変更`, exact: true })
   await expect(product).toBeFocused()
   const emptyProduct = page.getByRole('button', { name: 'CPUクーラーを選択', exact: true })
-  expect(Math.abs((await product.boundingBox())!.x - (await emptyProduct.boundingBox())!.x)).toBeLessThan(1)
+  expect(Math.abs((await product.boundingBox())!.x - (await emptyProduct.locator('span').boundingBox())!.x)).toBeLessThan(1)
   await expect(section.getByRole('button', { name: 'CPUを追加', exact: true })).toHaveCount(0)
   for (const area of [product.locator('.product-name'), product.locator('.product-details')]) {
     await area.click()
