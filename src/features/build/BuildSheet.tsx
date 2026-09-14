@@ -18,7 +18,7 @@ export function BuildSheet({ onSearch }: { onSearch: (request: SearchRequest) =>
         <span>製品名から変更</span>
       </div>
       <div className="sheet-columns" aria-hidden="true">
-        <span>パーツ</span><span>区分</span><span className="number-column">単価</span><span>数量</span><span className="number-column">小計</span><span />
+        <span>パーツ</span><span className="number-column">単価</span><span>数量</span><span className="number-column">小計</span><span />
       </div>
       <div className="category-list">
         {partCategories.map((category, index) => (

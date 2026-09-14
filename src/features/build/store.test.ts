@@ -37,7 +37,8 @@ describe('build state and persistence', () => {
     store.getState().addItem(storageProduct)
     const [first, second] = store.getState().items
     expect(first.id).not.toBe(second.id)
-    expect(first).toMatchObject({ kind: 'catalog', category: 'storage', product: storageProduct, quantity: 1, price: null, source: 'buy' })
+    expect(first).toMatchObject({ kind: 'catalog', category: 'storage', product: storageProduct, quantity: 1, price: null })
+    expect(first).not.toHaveProperty('source')
     expect(first).not.toHaveProperty('memo')
     expect(product).not.toHaveProperty('price')
     expect(product).not.toHaveProperty('quantity')
@@ -58,12 +59,13 @@ describe('build state and persistence', () => {
     const { storage, data } = memoryStorage()
     const { store } = await setup(storage)
     store.getState().addItem(product)
-    store.getState().addCustomItem({ name: 'OS', price: 22000, quantity: 2, source: 'owned' })
-    store.getState().updateItem(store.getState().items[0].id, { price: 78800, quantity: 3, source: 'owned' })
+    store.getState().addCustomItem({ name: 'OS', price: 0, quantity: 2 })
+    store.getState().updateItem(store.getState().items[0].id, { price: 78800, quantity: 3 })
     const persisted = JSON.parse(data.get(BUILD_STORAGE_KEY)!) as { version: number; state: Record<string, unknown> }
     expect(persisted.version).toBe(BUILD_STORAGE_VERSION)
     expect(Object.keys(persisted.state)).toEqual(['items'])
     expect(persisted.state.items).toEqual(store.getState().items)
+    for (const item of store.getState().items) expect(item).not.toHaveProperty('source')
     const { store: restored } = await setup(storage)
     expect(restored.getState().items).toEqual(store.getState().items)
     restored.getState().clearBuild()
@@ -119,10 +121,7 @@ describe('build state and persistence', () => {
     const snapshot = structuredClone(product)
     expect(store.getState().updateItem(first.id, { price: 32800 })).toBe(true)
     expect(store.getState().updateItem(first.id, { quantity: 2 })).toBe(true)
-    expect(store.getState().updateItem(first.id, { source: 'owned' })).toBe(true)
-    expect(store.getState().items[0]).toMatchObject({ price: 32800, quantity: 2, source: 'owned' })
-    store.getState().updateItem(first.id, { source: 'buy' })
-    expect(store.getState().items[0].price).toBe(32800)
+    expect(store.getState().items[0]).toMatchObject({ price: 32800, quantity: 2 })
     store.getState().updateItem(first.id, { price: 0 })
     expect(store.getState().items[0].price).toBe(0)
     store.getState().updateItem(first.id, { price: null })
@@ -135,7 +134,7 @@ describe('build state and persistence', () => {
   it.each([
     { price: -1 }, { price: 1.5 }, { price: NaN }, { price: Infinity }, { price: MAX_PRICE + 1 },
     { quantity: 0 }, { quantity: -1 }, { quantity: 1.5 }, { quantity: NaN }, { quantity: MAX_QUANTITY + 1 },
-    { memo: 'obsolete field' }, { source: 'invalid' }, { id: 'changed' }, { kind: 'custom' },
+    { memo: 'obsolete field' }, { source: 'invalid' }, { source: 'buy' }, { source: 'owned', price: 100 }, { id: 'changed' }, { kind: 'custom' },
     { product: {} }, { category: 'gpu' }, { price: undefined },
   ])('rejects an invalid update atomically %#', async (changes) => {
     const { store } = await setup(memoryStorage().storage)
@@ -149,13 +148,14 @@ describe('build state and persistence', () => {
     const { store } = await setup(memoryStorage().storage)
     expect(store.getState().addCustomItem({ name: '  Windows 11 Pro  ' })).toBe(true)
     const first = store.getState().items[0]
-    expect(first).toMatchObject({ kind: 'custom', name: 'Windows 11 Pro', quantity: 1, price: null, source: 'buy' })
+    expect(first).toMatchObject({ kind: 'custom', name: 'Windows 11 Pro', quantity: 1, price: null })
+    expect(first).not.toHaveProperty('source')
     expect(first).not.toHaveProperty('memo')
     expect(first).not.toHaveProperty('product')
     expect(first).not.toHaveProperty('category')
-    store.getState().updateItem(first.id, { price: 22000, quantity: 2, source: 'owned' })
+    store.getState().updateItem(first.id, { price: 22000, quantity: 2 })
     expect(store.getState().renameCustomItem(first.id, 'Windows 11 Home')).toBe(true)
-    expect(store.getState().items[0]).toMatchObject({ name: 'Windows 11 Home', price: 22000, quantity: 2, source: 'owned' })
+    expect(store.getState().items[0]).toMatchObject({ name: 'Windows 11 Home', price: 22000, quantity: 2 })
     expect(store.getState().renameCustomItem(first.id, ' ')).toBe(false)
     expect(store.getState().renameCustomItem(first.id, 'a'.repeat(MAX_NAME_LENGTH + 1))).toBe(false)
     store.getState().addItem(product)
@@ -165,7 +165,7 @@ describe('build state and persistence', () => {
     expect(store.getState().items[0].kind).toBe('catalog')
   })
 
-  it.each([{ name: ' ' }, { name: 'a'.repeat(MAX_NAME_LENGTH + 1) }, { name: 'OS', quantity: 0 }, { name: 'OS', price: -1 }, { name: 'OS', quantity: undefined }])('rejects invalid custom input %#', async (input) => {
+  it.each([{ name: ' ' }, { name: 'a'.repeat(MAX_NAME_LENGTH + 1) }, { name: 'OS', quantity: 0 }, { name: 'OS', price: -1 }, { name: 'OS', quantity: undefined }, { name: 'OS', source: 'owned' }])('rejects invalid custom input %#', async (input) => {
     const { store } = await setup(memoryStorage().storage)
     expect(store.getState().addCustomItem(input)).toBe(false)
     expect(store.getState().items).toEqual([])
@@ -176,28 +176,30 @@ describe('build state and persistence', () => {
     expect(store.getState().addCustomItem({ name: 'a'.repeat(MAX_NAME_LENGTH), price: MAX_PRICE, quantity: MAX_QUANTITY })).toBe(true)
   })
 
-  it('migrates version 1 to version 3, dropping memo while preserving even legacy single-category duplicates', async () => {
+  it.each([32800, 0, null])('migrates v1 owned price %s to zero, dropping source/memo while preserving legacy single-category duplicates', async (ownedPrice) => {
     const { storage, data } = memoryStorage()
     const legacy = [
-      { id: 'legacy-1', category: 'cpu', product, quantity: 2, price: 32800, source: 'owned', memo: '既存メモ' },
+      { id: 'legacy-1', category: 'cpu', product, quantity: 2, price: ownedPrice, source: 'owned', memo: '既存メモ' },
       { id: 'legacy-2', category: 'cpu', product, quantity: 1, price: null, source: 'buy', memo: '' },
       { id: 'legacy-3', category: 'cpu', product, quantity: 3, price: 0, source: 'buy', memo: '無料' },
     ]
     data.set(BUILD_STORAGE_KEY, JSON.stringify({ version: 1, state: { items: legacy } }))
     const { store, report } = await setup(storage)
-    const migrated = legacy.map(({ id, category, product, quantity, price, source }) => ({ id, category, product, quantity, price, source, kind: 'catalog' }))
+    const migrated = legacy.map(({ id, category, product, quantity, price, source }) => ({ id, category, product, quantity, price: source === 'owned' ? 0 : price, kind: 'catalog' }))
     expect(store.getState().items).toEqual(migrated)
     expect(report).not.toHaveBeenCalledWith(expect.any(String))
-    expect(JSON.parse(data.get(BUILD_STORAGE_KEY)!)).toEqual({ version: 3, state: { items: migrated } })
+    expect(getBuildSummary(store.getState().items)).toEqual({ partCount: 6, estimateTotal: 0, unpricedCount: 1 })
+    expect(JSON.parse(data.get(BUILD_STORAGE_KEY)!)).toEqual({ version: 4, state: { items: migrated } })
     const { store: restored } = await setup(storage)
     expect(restored.getState().items).toEqual(migrated)
-    expect(restored.getState().updateItem('legacy-1', { source: 'buy' })).toBe(true)
+    expect(restored.getState().updateItem('legacy-1', { price: 100 })).toBe(true)
+    expect(getBuildSummary(restored.getState().items).estimateTotal).toBe(200)
     expect(restored.getState().addItem(product)).toBe(false)
     expect(restored.getState().replaceItem('legacy-2', { ...product, name: 'Replacement CPU' })).toBe(true)
     expect(restored.getState().items).toHaveLength(3)
   })
 
-  it.each([1, 2, 3])('rejects duplicate IDs in version %i without overwriting storage', async (version) => {
+  it.each([1, 2, 3, 4])('rejects duplicate IDs in version %i without overwriting storage', async (version) => {
     const { storage, data } = memoryStorage()
     const item = { id: 'duplicate', kind: 'catalog', category: 'cpu', product, quantity: 1, price: null, source: 'buy', memo: '' }
     const raw = JSON.stringify({ version, state: { items: [item, item] } })
@@ -221,17 +223,24 @@ describe('build state and persistence', () => {
     expect(data.get(BUILD_STORAGE_KEY)).toBe(raw)
   })
 
-  it('migrates v2 catalog/custom items, preserves totals and writes only v3 fields on reload', async () => {
+  it.each([2, 3])('migrates v%i catalog/custom items to v4 with zero prices for owned items and preserves totals', async (version) => {
     const { storage, data } = memoryStorage()
     const catalog = { id: 'cpu', kind: 'catalog', category: 'cpu', product, quantity: 2, price: 32800, source: 'buy' }
     const custom = { id: 'custom', kind: 'custom', name: 'USBハブ', quantity: 3, price: 2200, source: 'owned' }
-    data.set(BUILD_STORAGE_KEY, JSON.stringify({ version: 2, state: { items: [{ ...catalog, memo: '旧メモ' }, { ...custom, memo: '旧メモ' }] } }))
+    const legacy = [
+      catalog, custom,
+      { ...catalog, id: 'owned-unpriced', source: 'owned', price: null, quantity: 4 },
+      { ...custom, id: 'unpriced', source: 'buy', price: null, quantity: 5 },
+      { ...custom, id: 'free', source: 'buy', price: 0, quantity: 6 },
+    ]
+    data.set(BUILD_STORAGE_KEY, JSON.stringify({ version, state: { items: legacy.map((item) => ({ ...item, memo: '旧メモ' })) } }))
     const { store } = await setup(storage)
-    expect(store.getState().items).toEqual([catalog, custom])
-    expect(getBuildSummary(store.getState().items)).toEqual({ partCount: 5, purchaseTotal: 65600, ownedCount: 3, unpricedCount: 0 })
-    expect(JSON.parse(data.get(BUILD_STORAGE_KEY)!)).toEqual({ version: 3, state: { items: [catalog, custom] } })
+    const migrated = legacy.map(({ source, ...item }) => ({ ...item, price: source === 'owned' ? 0 : item.price }))
+    expect(store.getState().items).toEqual(migrated)
+    expect(getBuildSummary(store.getState().items)).toEqual({ partCount: 20, estimateTotal: 65600, unpricedCount: 5 })
+    expect(JSON.parse(data.get(BUILD_STORAGE_KEY)!)).toEqual({ version: 4, state: { items: migrated } })
     const { store: restored } = await setup(storage)
-    expect(restored.getState().items).toEqual([catalog, custom])
+    expect(restored.getState().items).toEqual(migrated)
     expect(restored.getState().renameCustomItem('custom', 'ケーブル')).toBe(true)
   })
 
@@ -246,16 +255,16 @@ describe('build state and persistence', () => {
     expect(store.getState().updateItem(store.getState().items[0].id, { quantity: 2 })).toBe(true)
   })
 
-  it.each(['buy', 'owned'] as const)('replaces a product atomically, resets price and preserves ID, quantity and %s source', async (source) => {
+  it.each([18800, 0])('replaces a product atomically, resets price %i and preserves ID and quantity', async (price) => {
     const { store } = await setup(memoryStorage().storage)
     store.getState().addItem(storageProduct)
     store.getState().addItem(storageProduct)
     const [first, second] = store.getState().items
-    store.getState().updateItem(first.id, { price: 18800, quantity: 2, source })
+    store.getState().updateItem(first.id, { price, quantity: 2 })
     const replacement = { ...storageProduct, upstream_key: 'Storage/replacement', name: 'Other SSD' }
     expect(store.getState().replaceItem(first.id, replacement)).toBe(true)
-    expect(store.getState().items).toEqual([{ ...first, product: replacement, price: null, quantity: 2, source }, second])
-    expect(getBuildSummary(store.getState().items)).toMatchObject({ purchaseTotal: 0, unpricedCount: source === 'buy' ? 3 : 1 })
+    expect(store.getState().items).toEqual([{ ...first, product: replacement, price: null, quantity: 2 }, second])
+    expect(getBuildSummary(store.getState().items)).toMatchObject({ estimateTotal: 0, unpricedCount: 3 })
     expect(replacement).not.toHaveProperty('price')
   })
 

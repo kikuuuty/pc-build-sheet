@@ -180,7 +180,7 @@ test('broad selection and product areas support pointer and keyboard without int
   await row.getByRole('textbox').fill('10000')
   await row.getByRole('textbox').press('Enter')
   await expect(page.getByRole('dialog')).toHaveCount(0)
-  for (const name of [`${productName}の数量を増やす`, `${productName}の数量を減らす`, '流用', '購入']) {
+  for (const name of [`${productName}の数量を増やす`, `${productName}の数量を減らす`]) {
     await row.getByRole('button', { name, exact: true }).click()
     await expect(page.getByRole('dialog')).toHaveCount(0)
   }
@@ -211,8 +211,8 @@ test(`wide search dialog is centered, scrolls only results and supports search a
       meta: { ...fixture.meta, offset, returned: offset === 0 ? 20 : 1, has_more: offset === 0, next_offset: offset === 0 ? 20 : null },
     } })
   })
-  if (mode === 'replace') await page.addInitScript((product) => localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version: 3, state: { items: [
-    { id: 'cpu', kind: 'catalog', category: 'cpu', product, quantity: 2, price: 96800, source: 'owned' },
+  if (mode === 'replace') await page.addInitScript((product) => localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version: 4, state: { items: [
+    { id: 'cpu', kind: 'catalog', category: 'cpu', product, quantity: 2, price: 96800 },
   ] } })), fixture.data[0])
   await page.goto('/')
   await page.getByRole('button', { name: mode === 'add' ? 'CPUを選択' : `${productName}を変更`, exact: true }).click()
@@ -408,7 +408,7 @@ test('invalid persisted data gives a visible recovery message', async ({ page })
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
-test('estimate: inline editing, owned purchases, persistence, custom items and deletion', async ({ page }, testInfo) => {
+test('estimate: inline editing, zero prices, persistence, custom items and deletion', async ({ page }, testInfo) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/')
@@ -418,6 +418,9 @@ test('estimate: inline editing, owned purchases, persistence, custom items and d
   const cpu = page.locator('.build-item').filter({ has: page.getByText(productName, { exact: true }) })
   const total = page.locator('.summary-total dd')
   const price = cpu.getByRole('textbox', { name: `単価：${productName}（円）`, exact: true })
+  await expect(page.getByText(/区分|流用|購入合計/)).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '購入', exact: true })).toHaveCount(0)
+  await expect(page.getByText('見積もり合計', { exact: true })).toBeVisible()
   await expect(cpu.locator('.item-subtotal')).toContainText('価格未入力')
   await expect(page.locator('.summary-incomplete')).toContainText('価格未入力 1点')
   await expect(cpu.getByRole('button', { name: `${productName}の数量を減らす` })).toBeDisabled()
@@ -431,19 +434,21 @@ test('estimate: inline editing, owned purchases, persistence, custom items and d
   await expect(page.locator('.summary-count strong')).toHaveText('2')
   await expect(page.locator('.summary-incomplete')).toHaveCount(0)
 
-  await cpu.getByRole('button', { name: '流用', exact: true }).click()
-  await expect(cpu.getByRole('button', { name: '流用', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await price.fill('0')
+  await price.press('Enter')
   await expect(total).toHaveText('￥0')
-  await expect(page.locator('.summary-owned dd')).toHaveText('2点')
-  await expect(cpu.locator('.item-subtotal')).toContainText('流用')
-  await expect(price).toHaveValue('32800')
-  await expect(cpu.locator('.price-display')).toHaveText('￥32,800')
-  await cpu.getByRole('button', { name: '購入', exact: true }).click()
+  await expect(page.locator('.summary-unpriced dd')).toHaveText('0点')
+  await expect(cpu.locator('.item-subtotal')).toContainText('￥0')
+  await expect(page.locator('.summary-incomplete')).toHaveCount(0)
+  await page.reload()
+  await expect(price).toHaveValue('0')
+  await expect(total).toHaveText('￥0')
+  await price.fill('32800')
+  await price.press('Enter')
   await expect(total).toHaveText('￥65,600')
   await page.reload()
   await expect(price).toHaveValue('32800')
   await expect(cpu.getByRole('group', { name: `${productName}の数量`, exact: true })).toContainText('2')
-  await expect(cpu.getByRole('button', { name: '購入', exact: true })).toHaveAttribute('aria-pressed', 'true')
   await expect(total).toHaveText('￥65,600')
 
   const customOpener = page.getByRole('button', { name: '任意項目を追加', exact: true })
@@ -459,9 +464,12 @@ test('estimate: inline editing, owned purchases, persistence, custom items and d
   await expect(total).toHaveText('￥87,600')
   await custom.getByRole('button', { name: 'Windows 11 Proの数量を増やす', exact: true }).click()
   await expect(total).toHaveText('￥109,600')
-  await custom.getByRole('button', { name: '流用', exact: true }).click()
+  await custom.getByRole('textbox').fill('0')
+  await custom.getByRole('textbox').press('Enter')
   await expect(total).toHaveText('￥65,600')
-  await custom.getByRole('button', { name: '購入', exact: true }).click()
+  await expect(custom.locator('.item-subtotal')).toContainText('￥0')
+  await custom.getByRole('textbox').fill('22000')
+  await custom.getByRole('textbox').press('Enter')
   await custom.getByRole('button', { name: 'Windows 11 Proの名前を編集', exact: true }).click()
   await page.getByRole('textbox', { name: '名前（必須）', exact: true }).fill('Windows 11 Pro 日本語版')
   await page.getByRole('button', { name: '保存する', exact: true }).click()
@@ -517,15 +525,17 @@ test('price drafts, zero versus null, invalid values and small-screen long conte
   await price.press('Tab')
   await expect(page.locator('.summary-unpriced dd')).toHaveText('1点')
   await expect(page.locator('.summary-incomplete')).toContainText('構成全体の総額ではありません')
-  await row.getByRole('button', { name: '流用', exact: true }).click()
+  await page.reload()
+  await expect(price).toHaveValue('')
+  await expect(page.locator('.summary-unpriced dd')).toHaveText('1点')
+  await price.fill('0')
+  await price.press('Enter')
   await expect(page.locator('.summary-unpriced dd')).toHaveText('0点')
   await expect(page.locator('.summary-incomplete')).toHaveCount(0)
   await page.reload()
-  await expect(price).toHaveValue('')
-  await expect(row.getByRole('button', { name: '流用', exact: true })).toHaveAttribute('aria-pressed', 'true')
+  await expect(price).toHaveValue('0')
   await price.fill('100000000')
   await price.press('Enter')
-  await row.getByRole('button', { name: '購入', exact: true }).click()
   await expect(page.locator('.summary-total dd')).toHaveText('￥100,000,000')
   for (const width of [320, 700, 740, 900, 1024, 1280]) {
     await page.setViewportSize({ width, height: 720 })
@@ -559,9 +569,53 @@ test('migrates legacy items in the browser and enforces quantity limits', async 
   await page.reload()
   await expect(page.locator('.summary-count strong')).toHaveText('98')
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as { version: number; state: { items: unknown[] } })
-  expect(saved).toMatchObject({ version: 3, state: { items: [{ id: 'legacy', kind: 'catalog', quantity: 98, price: 32800 }] } })
+  expect(saved).toMatchObject({ version: 4, state: { items: [{ id: 'legacy', kind: 'catalog', quantity: 98, price: 32800 }] } })
   expect(saved.state.items[0]).not.toHaveProperty('memo')
+  expect(saved.state.items[0]).not.toHaveProperty('source')
 })
+
+for (const version of [1, 2, 3]) {
+test(`migrates v${version} sources to zero prices once while preserving items and the estimate`, async ({ page }) => {
+  const product = makeProduct('cpu', 'Migration CPU')
+  const base = { kind: 'catalog', category: 'cpu', product }
+  const items = [
+    { ...base, id: 'priced', price: 10000, quantity: 1, source: 'buy' },
+    { ...base, id: 'owned-price', price: 32800, quantity: 2, source: 'owned' },
+    { ...base, id: 'owned-null', price: null, quantity: 3, source: 'owned' },
+    { ...base, id: 'unpriced', price: null, quantity: 4, source: 'buy' },
+    { ...base, id: 'free', price: 0, quantity: 5, source: 'buy' },
+    ...(version === 1 ? [] : [{ kind: 'custom', id: 'custom', name: 'OS', price: 22000, quantity: 6, source: 'owned' }]),
+  ]
+  const legacy = items.map((item) => ({ ...item, kind: version === 1 ? undefined : item.kind, memo: '旧メモ' }))
+  await page.addInitScript(({ version, items }) => {
+    if (!localStorage.getItem('pc-build-sheet:build')) localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version, state: { items } }))
+  }, { version, items: legacy })
+  await page.goto('/')
+  const rows = page.locator('.build-item')
+  await expect(rows).toHaveCount(items.length)
+  await expect(page.locator('.summary-total dd')).toHaveText('￥10,000')
+  await expect(page.locator('.summary-count strong')).toHaveText(version === 1 ? '15' : '21')
+  await expect(page.locator('.summary-unpriced dd')).toHaveText('4点')
+  await expect(page.getByText(/区分|流用|購入合計/)).toHaveCount(0)
+  await expect(rows.nth(1).getByRole('textbox')).toHaveValue('0')
+  await expect(rows.nth(2).getByRole('textbox')).toHaveValue('0')
+  await expect(rows.nth(3).getByRole('textbox')).toHaveValue('')
+  await expect(rows.nth(4).getByRole('textbox')).toHaveValue('0')
+  const expectedItems = items.map(({ source, ...item }) => ({ ...item, price: source === 'owned' ? 0 : item.price }))
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as unknown)
+  expect(saved).toEqual({ version: 4, state: { items: expectedItems } })
+  await page.reload()
+  await expect(rows.nth(1).getByRole('textbox')).toHaveValue('0')
+  await expect(page.locator('.summary-total dd')).toHaveText('￥10,000')
+  // After migration a manually entered price is ordinary data and must never be zeroed again.
+  await rows.nth(1).getByRole('textbox').fill('500')
+  await rows.nth(1).getByRole('textbox').press('Enter')
+  await page.reload()
+  await expect(rows.nth(1).getByRole('textbox')).toHaveValue('500')
+  await expect(page.locator('.summary-total dd')).toHaveText('￥11,000')
+  await expect(page.locator('.summary-unpriced dd')).toHaveText('4点')
+})
+}
 
 test('multiple storage rows remain independently editable and persist', async ({ page }) => {
   const ssd = {
@@ -580,21 +634,22 @@ test('multiple storage rows remain independently editable and persist', async ({
   await rows.first().getByRole('textbox').fill('15000')
   await rows.first().getByRole('textbox').press('Enter')
   await rows.first().getByRole('button', { name: `${ssd.name}の数量を増やす` }).click()
-  await rows.last().getByRole('button', { name: '流用', exact: true }).click()
+  await rows.last().getByRole('textbox').fill('0')
+  await rows.last().getByRole('textbox').press('Enter')
   await expect(page.locator('.summary-total dd')).toHaveText('￥30,000')
   await expect(page.locator('.summary-count strong')).toHaveText('3')
-  await expect(page.locator('.summary-owned dd')).toHaveText('1点')
+  await expect(page.locator('.summary-unpriced dd')).toHaveText('0点')
   await page.reload()
   await expect(rows).toHaveCount(2)
   await expect(rows.first().getByRole('textbox')).toHaveValue('15000')
-  await expect(rows.last().getByRole('textbox')).toHaveValue('')
+  await expect(rows.last().getByRole('textbox')).toHaveValue('0')
   await rows.first().getByRole('button', { name: `${ssd.name}を構成から削除` }).click()
   await expect(rows).toHaveCount(1)
   await expect(page.locator('.summary-count strong')).toHaveText('1')
   await expect(page.locator('.summary-total dd')).toHaveText('￥0')
 })
 
-test('single product name opens replacement, cancellation keeps values, replacement resets price and preserves quantity/source/ID', async ({ page }) => {
+test('single product name opens replacement, cancellation keeps values, replacement resets price and preserves quantity/ID', async ({ page }) => {
   const replacement = makeProduct('cpu', 'AMD Ryzen 9 replacement', 2)
   await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: { ...fixture, data: [fixture.data[0], replacement], meta: { ...fixture.meta, returned: 2 } } }))
   await page.goto('/')
@@ -607,7 +662,6 @@ test('single product name opens replacement, cancellation keeps values, replacem
   await row.getByRole('textbox').fill('96800')
   await row.getByRole('textbox').press('Enter')
   await row.getByRole('button', { name: `${productName}の数量を増やす`, exact: true }).click()
-  await row.getByRole('button', { name: '流用', exact: true }).click()
   const original = await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as { state: { items: { id: string }[] } })
   await opener.click()
   await expect(page.getByRole('dialog', { name: 'CPUを変更', exact: true })).toBeVisible()
@@ -623,15 +677,12 @@ test('single product name opens replacement, cancellation keeps values, replacem
   await expect(row.getByRole('button', { name: `${replacement.name}を変更`, exact: true })).toBeFocused()
   await expect(row.getByRole('textbox')).toHaveValue('')
   await expect(row.getByRole('group', { name: `${replacement.name}の数量`, exact: true })).toContainText('2')
-  await expect(row.getByRole('button', { name: '流用', exact: true })).toHaveAttribute('aria-pressed', 'true')
-  await expect(page.locator('.summary-owned dd')).toHaveText('2点')
-  await row.getByRole('button', { name: '購入', exact: true }).click()
   await expect(page.locator('.summary-total dd')).toHaveText('￥0')
   await expect(page.locator('.summary-unpriced dd')).toHaveText('2点')
   await page.reload()
   await expect(row.getByRole('textbox')).toHaveValue('')
   await expect(page.locator('.summary-unpriced dd')).toHaveText('2点')
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as unknown)).toMatchObject({ version: 3, state: { items: [{ id: original.state.items[0].id, price: null, quantity: 2, source: 'buy', product: replacement }] } })
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as unknown)).toMatchObject({ version: 4, state: { items: [{ id: original.state.items[0].id, price: null, quantity: 2, product: replacement }] } })
 })
 
 test('multiple category adds distinct products, replaces only the clicked row and clears stale price drafts', async ({ page }) => {
@@ -700,7 +751,8 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
     await expect(section.getByRole('button', { name: `${category.label}を追加`, exact: true })).toHaveCount(category.cardinality === 'multiple' ? 1 : 0)
     await expect(section.getByRole('button', { name: `${category.label}を選択`, exact: true })).toHaveCount(0)
   }
-  for (const label of ['区分', '単価', '数量', '小計']) await expect(rows.getByText(label, { exact: true })).toHaveCount(0)
+  await expect(page.getByText(/区分|流用|購入合計/)).toHaveCount(0)
+  for (const label of ['単価', '数量', '小計']) await expect(rows.getByText(label, { exact: true })).toHaveCount(0)
   const metrics = []
   for (const width of isMobile ? [740, 393, 320] : [1440, 1024, 1280]) {
     await page.setViewportSize({ width, height: 960 })
@@ -741,9 +793,9 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
       }
       if (!isMobile) {
         const headings = await sheet.locator('.sheet-columns > span').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x))
-        const columns = await row.locator(':scope > button, :scope > .source-toggle, :scope > .price-field, :scope > .quantity-stepper, :scope > .item-subtotal').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x))
+        const columns = await row.locator(':scope > button, :scope > .price-field, :scope > .quantity-stepper, :scope > .item-subtotal').evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().x))
         for (let i = 0; i < headings.length; i++) expect(Math.abs(headings[i] - columns[i])).toBeLessThan(1)
-        const centers = await row.locator(':scope > button, :scope > .source-toggle, :scope > .price-field, :scope > .quantity-stepper, :scope > .item-subtotal').evaluateAll((elements) => elements.map((element) => {
+        const centers = await row.locator(':scope > button, :scope > .price-field, :scope > .quantity-stepper, :scope > .item-subtotal').evaluateAll((elements) => elements.map((element) => {
           const rect = element.getBoundingClientRect()
           return rect.y + rect.height / 2
         }))
@@ -765,6 +817,9 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
   expect((await sheet.boundingBox())!.height - before).toBeLessThanOrEqual(isMobile ? 135 : 60)
   await page.screenshot({ path: testInfo.outputPath('multiple-storage-sheet.png'), fullPage: true })
   const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as { version: number; state: { items: unknown[] } })
-  expect(persisted.version).toBe(3)
-  for (const item of persisted.state.items) expect(item).not.toHaveProperty('memo')
+  expect(persisted.version).toBe(4)
+  for (const item of persisted.state.items) {
+    expect(item).not.toHaveProperty('memo')
+    expect(item).not.toHaveProperty('source')
+  }
 })

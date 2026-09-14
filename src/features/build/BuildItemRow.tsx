@@ -37,10 +37,6 @@ export function BuildItemRow({ item, productRef, onSearch, onRemove, onAnnounce 
         <span id={`${id}-name`} className="product-name">{name}</span>
         {specs && <span className="product-details" title={specs}>{specs}</span>}
       </button>
-      <div className="source-toggle" role="group" aria-label={`${name}の購入区分`} aria-describedby="owned-rule">
-        <button type="button" aria-pressed={item.source === 'buy'} onClick={() => updateItem(item.id, { source: 'buy' })}>購入</button>
-        <button type="button" aria-pressed={item.source === 'owned'} onClick={() => updateItem(item.id, { source: 'owned' })}>流用</button>
-      </div>
       <PriceInput key={item.kind === 'catalog' ? item.product.upstream_key : item.id} name={name} price={item.price} onCommit={(price) => { updateItem(item.id, { price }) }} />
       <div className="quantity-stepper" role="group" aria-label={`${name}の数量`}>
         <button type="button" aria-label={`${name}の数量を減らす`} disabled={item.quantity <= 1} onClick={() => updateItem(item.id, { quantity: item.quantity - 1 })}><Minus size={14} aria-hidden="true" /></button>
@@ -49,7 +45,7 @@ export function BuildItemRow({ item, productRef, onSearch, onRemove, onAnnounce 
       </div>
       <div className="item-subtotal" role="status" aria-atomic="true">
         <span className="sr-only">{name}の小計：</span>
-        <strong>{item.source === 'owned' ? '流用' : subtotal === null ? <><span aria-hidden="true">—</span><span className="sr-only">価格未入力</span></> : formatYen(subtotal)}</strong>
+        <strong>{subtotal === null ? <><span aria-hidden="true">—</span><span className="sr-only">価格未入力</span></> : formatYen(subtotal)}</strong>
       </div>
       <button type="button" className="icon-button remove-button" aria-label={`${name}を構成から削除`} onClick={onRemove}><Trash2 size={16} aria-hidden="true" /></button>
       {editing && item.kind === 'custom' && <CustomItemDialog item={item} onClose={() => setEditing(false)} onSaved={(name) => onAnnounce(`${name}に名前を変更しました`)} />}
