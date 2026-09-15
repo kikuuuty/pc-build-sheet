@@ -20,7 +20,7 @@ export function CustomItemDialog({ item, onClose, onSaved }: { item?: Extract<Bu
         onClose()
       }}>
         <label htmlFor="custom-name">名前（必須）<input ref={nameRef} id="custom-name" value={name} required maxLength={MAX_NAME_LENGTH} onChange={(event) => setName(event.target.value)} /></label>
-        {!item && <p className="field-hint">追加後、シートで単価・数量を設定できます。</p>}
+        {!item && <p className="field-hint">追加後、シートで価格を設定できます。</p>}
         {error && <p className="field-error" role="alert">名前は空白以外の1〜{MAX_NAME_LENGTH}文字で入力してください。</p>}
         <div className="dialog-actions">
           <button type="button" className="button secondary" onClick={onClose}>キャンセル</button>

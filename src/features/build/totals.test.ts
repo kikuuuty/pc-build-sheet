@@ -3,32 +3,27 @@ import fixture from '../../test/fixtures/cpu-search.json'
 import { catalogProductSchema } from '../../api/catalog/schemas'
 import { formatYen } from '../../domain/currency'
 import type { BuildItem } from './schemas'
-import { getBuildSummary, getItemSubtotal } from './totals'
+import { getBuildSummary } from './totals'
 
 const cpu: BuildItem = {
   kind: 'catalog', id: 'cpu', category: 'cpu', product: catalogProductSchema.parse(fixture.data[0]),
-  quantity: 2, price: 32800,
+  price: 32800,
 }
-const custom: BuildItem = { kind: 'custom', id: 'os', name: 'OS', quantity: 1, price: 22000 }
+const custom: BuildItem = { kind: 'custom', id: 'os', name: 'OS', price: 22000 }
 
-describe('estimate totals and quantities', () => {
-  it('multiplies unit price by quantity and reflects a quantity change', () => {
-    expect(getItemSubtotal(cpu)).toBe(65600)
-    expect(getItemSubtotal({ ...cpu, quantity: 3 })).toBe(98400)
-    expect(getBuildSummary([{ ...cpu, quantity: 3 }])).toEqual({ partCount: 3, estimateTotal: 98400, unpricedCount: 0 })
+describe('estimate totals and row counts', () => {
+  it('counts each row once even when the product is the same', () => {
+    expect(getBuildSummary([cpu, { ...cpu, id: 'second', price: 30000 }])).toEqual({ partCount: 2, estimateTotal: 62800, unpricedCount: 0 })
   })
 
   it('sums catalog and custom items and counts only missing prices as unpriced', () => {
-    const items: BuildItem[] = [cpu, custom, { ...custom, id: 'free', price: 0, quantity: 3 }, { ...cpu, id: 'unpriced', price: null, quantity: 4 }]
-    expect(getBuildSummary(items)).toEqual({ partCount: 10, estimateTotal: 87600, unpricedCount: 4 })
-    expect(getItemSubtotal(items[2])).toBe(0)
-    expect(getItemSubtotal(items[3])).toBeNull()
+    const items: BuildItem[] = [cpu, custom, { ...custom, id: 'free', price: 0 }, { ...cpu, id: 'unpriced', price: null }]
+    expect(getBuildSummary(items)).toEqual({ partCount: 4, estimateTotal: 54800, unpricedCount: 1 })
   })
 
   it('distinguishes a zero price from an unknown price for both catalog and custom items', () => {
-    expect(getItemSubtotal({ ...cpu, price: 0 })).toBe(0)
-    expect(getBuildSummary([{ ...cpu, price: 0 }, { ...custom, price: null, quantity: 3 }, { ...custom, id: 'free', price: 0, quantity: 4 }]))
-      .toEqual({ partCount: 9, estimateTotal: 0, unpricedCount: 3 })
+    expect(getBuildSummary([{ ...cpu, price: 0 }, { ...custom, price: null }, { ...custom, id: 'free', price: 0 }]))
+      .toEqual({ partCount: 3, estimateTotal: 0, unpricedCount: 1 })
   })
 
   it('handles an empty build', () => {

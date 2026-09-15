@@ -5,12 +5,12 @@ import type { CatalogProduct } from '../../api/catalog/types'
 import { partCategories } from '../../domain/categories'
 import {
   buildItemSchema, customItemInputSchema, customNameSchema, itemChangesSchema,
-  legacyBuildSchema, legacyDiscriminatedBuildSchema, migrateBuild, persistedBuildSchema,
+  legacyBuildSchema, legacyDiscriminatedBuildSchema, legacyQuantityBuildSchema, migrateBuild, persistedBuildSchema,
   type BuildItem, type CustomItemInput, type ItemChanges,
 } from './schemas'
 
 export const BUILD_STORAGE_KEY = 'pc-build-sheet:build'
-export const BUILD_STORAGE_VERSION = 4
+export const BUILD_STORAGE_VERSION = 5
 
 type BuildState = {
   items: BuildItem[]
@@ -30,6 +30,7 @@ const persistedEnvelopeSchema = z.discriminatedUnion('version', [
   z.object({ version: z.literal(1), state: legacyBuildSchema }),
   z.object({ version: z.literal(2), state: legacyDiscriminatedBuildSchema }),
   z.object({ version: z.literal(3), state: legacyDiscriminatedBuildSchema }),
+  z.object({ version: z.literal(4), state: legacyQuantityBuildSchema }),
   z.object({ version: z.literal(BUILD_STORAGE_VERSION), state: persistedBuildSchema }),
 ])
 
@@ -79,7 +80,7 @@ export function createBuildStore(
         if (!category || (category.cardinality === 'single' && get().items.some((item) => item.kind === 'catalog' && item.category === category.id))) return false
         const item = buildItemSchema.safeParse({
           id: crypto.randomUUID(), kind: 'catalog', category: product.category, product,
-          quantity: 1, price: null,
+          price: null,
         })
         if (!item.success) return false
         set((state) => ({ items: [...state.items, item.data] }))
@@ -97,7 +98,7 @@ export function createBuildStore(
         const parsed = customItemInputSchema.safeParse(input)
         if (!parsed.success) return false
         const item = buildItemSchema.safeParse({
-          id: crypto.randomUUID(), kind: 'custom', quantity: 1, price: null, ...parsed.data,
+          id: crypto.randomUUID(), kind: 'custom', price: null, ...parsed.data,
         })
         if (!item.success) return false
         set((state) => ({ items: [...state.items, item.data] }))

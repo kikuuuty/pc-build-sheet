@@ -18,7 +18,7 @@ export function PriceInput({ name, price, onCommit }: { name: string; price: num
   }
   return (
     <div className="price-field">
-      <label className="sr-only" htmlFor={id}>単価：{name}（円）</label>
+      <label className="sr-only" htmlFor={id}>価格：{name}（円）</label>
       <div className="price-input-wrapper">
         <input id={id} type="text" inputMode="numeric" autoComplete="off" maxLength={24}
           className={!focused && draft === null ? 'price-resting' : undefined}

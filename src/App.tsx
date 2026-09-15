@@ -26,7 +26,7 @@ export function App() {
         <footer className="app-footer"><span>自作PC構成シート</span><Attribution /></footer>
       </main>
       <div className="sr-only" role="status">{announcement}</div>
-      {search && <ProductSearchDialog {...search} onClose={() => setSearch(null)} onSelected={(name) => { setAnnouncement(`${name}${search.target.mode === 'add' ? 'を構成に追加しました' : 'に置き換えました。単価は未入力に戻りました'}`); setSearch(null) }} />}
+      {search && <ProductSearchDialog {...search} onClose={() => setSearch(null)} onSelected={(name) => { setAnnouncement(`${name}${search.target.mode === 'add' ? 'を構成に追加しました' : 'に置き換えました。価格は未入力に戻りました'}`); setSearch(null) }} />}
     </>
   )
 }

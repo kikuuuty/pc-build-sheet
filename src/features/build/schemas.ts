@@ -3,11 +3,9 @@ import { catalogProductSchema } from '../../api/catalog/schemas'
 import { partCategorySchema } from '../../domain/categories'
 
 export const MAX_PRICE = 100_000_000
-export const MAX_QUANTITY = 99
 export const MAX_NAME_LENGTH = 200
 
 export const editableFieldsSchema = z.object({
-  quantity: z.number().int().min(1).max(MAX_QUANTITY),
   price: z.number().int().min(0).max(MAX_PRICE).nullable(),
 })
 export const itemChangesSchema = editableFieldsSchema.partial().strict()
@@ -41,28 +39,45 @@ export const persistedBuildSchema = z.object({ items: z.array(buildItemSchema) }
 
 // Only legacy storage has a purchase source. Validate it before converting owned prices to zero.
 const legacySourceFields = { source: z.enum(['buy', 'owned']) }
+const legacyQuantityFields = { quantity: z.number().int().min(1).max(99) }
 // v1 lacks the discriminator. Zod strips obsolete fields (including memo) in v1/v2.
 // Cardinality is an addition rule, not a restoration rule: preserve legacy duplicate rows.
 export const legacyBuildSchema = z.object({
-  items: z.array(z.object({ ...catalogFields, ...legacySourceFields }).refine((item) => item.category === item.product.category)),
+  items: z.array(z.object({ ...catalogFields, ...legacySourceFields, ...legacyQuantityFields }).refine((item) => item.category === item.product.category)),
 }).refine(uniqueIds,
   { message: 'Build item IDs must be unique' },
 )
 
 export const legacyDiscriminatedBuildSchema = z.object({
   items: z.array(z.discriminatedUnion('kind', [
-    catalogBuildItemSchema.safeExtend(legacySourceFields),
-    customBuildItemSchema.extend(legacySourceFields),
+    catalogBuildItemSchema.safeExtend({ ...legacySourceFields, ...legacyQuantityFields }),
+    customBuildItemSchema.extend({ ...legacySourceFields, ...legacyQuantityFields }),
+  ])),
+}).refine(uniqueIds, { message: 'Build item IDs must be unique' })
+
+export const legacyQuantityBuildSchema = z.object({
+  items: z.array(z.discriminatedUnion('kind', [
+    catalogBuildItemSchema.safeExtend(legacyQuantityFields),
+    customBuildItemSchema.extend(legacyQuantityFields),
   ])),
 }).refine(uniqueIds, { message: 'Build item IDs must be unique' })
 
 export function migrateBuild(state: unknown, version: number) {
-  if (![1, 2, 3].includes(version)) throw new Error('Unsupported build version')
+  if (![1, 2, 3, 4].includes(version)) throw new Error('Unsupported build version')
   const items = version === 1
     ? legacyBuildSchema.parse(state).items.map((item) => ({ ...item, kind: 'catalog' }))
-    : legacyDiscriminatedBuildSchema.parse(state).items
-  // Preserve the estimate and unpriced count; the v4 schema removes source from each item.
-  return persistedBuildSchema.parse({ items: items.map((item) => ({ ...item, price: item.source === 'owned' ? 0 : item.price })) })
+    : version === 4 ? legacyQuantityBuildSchema.parse(state).items : legacyDiscriminatedBuildSchema.parse(state).items
+  const usedIds = new Set(items.map((item) => item.id))
+  // Expand in place, keeping original IDs and preserving prices, counts and legacy duplicate categories.
+  return persistedBuildSchema.parse({ items: items.flatMap((item) => Array.from({ length: item.quantity }, (_, index) => {
+    let id = item.id
+    if (index > 0) {
+      id = `${item.id}:copy:${index}`
+      while (usedIds.has(id)) id += ':'
+      usedIds.add(id)
+    }
+    return { ...item, id, price: 'source' in item && item.source === 'owned' ? 0 : item.price }
+  })) })
 }
 
 export type BuildItem = z.infer<typeof buildItemSchema>

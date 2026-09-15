@@ -22,7 +22,7 @@ export function BuildSummary() {
         </dl>
         {summary.unpricedCount > 0 && <p className="summary-incomplete">※ 価格未入力 {summary.unpricedCount}点。見積もり合計は入力済み分のみで、構成全体の総額ではありません。</p>}
       </div>
-      <p className="summary-note">価格はユーザー入力の単価です。</p>
+      <p className="summary-note">価格はユーザーが入力した金額です。</p>
       <div className="summary-footer">
         <p>選んだパーツは、このブラウザに自動保存されます。</p>
         <button type="button" className="text-button reset-button" disabled={!items.length} onClick={() => setConfirming(true)}><RotateCcw size={15} aria-hidden="true" />構成をリセット</button>
