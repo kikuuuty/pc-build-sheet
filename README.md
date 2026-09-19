@@ -47,7 +47,7 @@ npm run test:live
 
 - 単体テスト：各行の価格合計、未入力/0円の区別、行数ベースの集計、価格入力の正規化と上限、部分更新のinvariant、カテゴリごとのsingle/multiple制約、製品置換と価格リセット、任意項目の追加・名前変更・削除、persist対象・復元・v1/v2/v3/v4→v5 migration・不正データ・保存障害。旧数量の行展開で金額・点数を保ち、IDが衝突しないことも検証します。既存のAPI schema・HTTP/通信エラー・中断・retry方針・スペック表示も検証します。
 - E2E：APIを固定レスポンスに置き換え、PC/モバイルで検索→追加→価格入力→0円入力→リロード→任意項目→削除、製品名からの置換、複数Storageの独立編集、旧データの0円変換・行展開と移行後の再編集、入力エラーを検証します。9カテゴリを埋めたシートの高さ、desktop列の整列、320px幅を含む操作要素の重なり・横スクロールも確認します。検索Dialogのdebounce・IME・pagination・0件・エラー・中断・フォーカス制御の既存テストを維持し、追加/置換両モードでpagination・中断・フォーカス復帰を検証しています。E2E/実APIテストは実行前に本番ビルドを作成し、PlaywrightがVite previewを起動・終了します。
-- `test:live`：9カテゴリの実レスポンスをschema検証し、ブラウザから `9800x3d` 検索 → 追加 → リロード → 削除まで確認します。ネットワークと公開APIの稼働状況に依存します。
+- `test:live`：カテゴリ一覧と既存9カテゴリの実レスポンスをschema検証します。ブラウザでCPU空欄一覧のcursorページ移動・前へ、`ryzen` のoffsetページ移動・前へ、`9800x3d` 検索 → 追加 → リロード → 削除まで確認します。ネットワークと公開APIの稼働状況に依存します。
 - スクリーンショット・失敗時traceは `test-results/` に出力します（Git対象外）。
 - GitHub Actions（`.github/workflows/ci.yml`）：PRとmainへのpushでNode.js 24上の `npm ci` → lint → typecheck → unit test → production build → Playwright Chromiumセットアップ → desktop/mobile E2Eを実行します。通常CIは公開APIに依存せず、`test:live` は含めません。
 
@@ -55,21 +55,27 @@ npm run test:live
 
 **pc-parts-catalog**：<https://pc-parts-catalog.kikuuuty.workers.dev>
 
-- `GET /v1/categories`：サーバーが提供するカテゴリを確認。表示名・表示順は `src/domain/categories.ts` に集約しています。
-- `GET /v1/search?category=cpu&q=9800x3d&limit=20&offset=0`：製品検索。空の検索語は `q` を省略し、カテゴリ一覧を取得します。
-- 1ページ20件。続きは `meta.next_offset` を使用します。`meta.returned` は表示中の件数で、総ヒット数ではありません。
+- `GET /v1/categories`：API側の30カテゴリと将来追加される非空のカテゴリIDを受け入れます。UIは `src/domain/categories.ts` の既存9カテゴリを維持し、選択カテゴリがAPI一覧に存在することを確認してから検索します。
+- 検索語あり：`GET /v1/search?category=cpu&q=9800x3d&limit=20&offset=0`。続きは `meta.next_offset`、前へは使用済みoffsetの履歴を使用します。`next_cursor` はnull、検索windowは1000件です。
+- 検索語なし：`GET /v1/search?category=cpu&limit=20`。続きは `cursor=meta.next_cursor`、前へは使用済みcursor（初回は省略）の履歴を使用します。`q` / `offset` は送信しません。`window_limit` / `next_offset` はnull、レスポンスの `offset` は全ページ0です。
+- `SearchParams` とDialogのpagination状態はkeyword/listingの判別可能なunionです。cursorは不透明な値として扱い、検索語変更時に履歴を初期化します。
+- 1ページ20件。次のoffset/cursorがnullなら「次へ」を無効化します。keywordの `window_exhausted` は絞り込み案内を表示します。`meta.returned` は表示中の件数で、総ヒット数ではありません。
 - 認証なし、`credentials: 'omit'`、公開CORSを使ってブラウザから直接接続します。
 - 300ms debounce、IME変換中の検索抑制、検索語変更・モーダル終了時のAbortSignalによる中断。
 - Queryのメモリキャッシュは60秒。通信/timeout/502/503/504は最大1回のbackoff再試行（`Retry-After` が60秒を超える場合は自動再試行なし）。429や400/500、schemaエラーは自動再試行しません。手動再試行も `Retry-After` を尊重します。
 - 個々のHTTPリクエストは15秒でtimeout。利用者には日本語のエラーを表示し、レスポンス本文やstack traceは表示しません。
 
-契約は2026-09-13に以下と実レスポンスで確認しました。
+契約は2026-09-19にBackend HEAD `04a9d37` の以下の実装・ドキュメントと本番レスポンスで確認しました。
 
 - [Consumer API契約](https://github.com/kikuuuty/pc-parts-catalog/blob/main/docs/cloudflare-production.md#frontend-integration-quick-reference)
 - [Workerのレスポンス生成](https://github.com/kikuuuty/pc-parts-catalog/blob/main/src/worker.js)
 - [カテゴリ別spec型](https://github.com/kikuuuty/pc-parts-catalog/blob/main/src/model.js)
+- [追加カテゴリのspec型](https://github.com/kikuuuty/pc-parts-catalog/blob/main/src/extended-models.js)
+- [Pagination契約](https://github.com/kikuuuty/pc-parts-catalog/blob/main/docs/pagination.md)
 
-`CatalogProduct` はカテゴリで判別できるZod schemaから型を導出しています。未知の追加フィールドは除去し、既知の欠損spec値は `null` として扱います。製品参照にはカテゴリを含む `upstream_key` を保持します。APIのDB内部IDやUUID単体を恒久的な製品識別子として扱いません。
+`CatalogProduct` は既存9カテゴリで判別できるZod schemaから型を導出しています。既存9カテゴリのspec型はBackendと一致し、未知の追加フィールドは除去、既知の欠損spec値は `null` として扱います。HTTP製品schemaは `source` を必須とし、以前の保存済み製品はsourceなしでも復元できます（保存versionは5を維持）。製品参照には `source` とカテゴリを含む `upstream_key` を保持します。APIのDB内部IDやUUID単体を恒久的な製品識別子として扱いません。
+
+将来30カテゴリをUIへ追加する際は、`extended-models.js` に対応する製品schemaのunion分岐、`PartCategory`・表示名・表示順・追加制約、スペック要約、Store/保存データの対応とテストを拡張する必要があります。今回のカテゴリ一覧schemaはUIカテゴリ定義に依存しませんが、製品検索・構成シートは引き続き既存9カテゴリが対象です。
 
 ## 主な構成
 
@@ -81,7 +87,7 @@ src/
   features/
     build/            高密度シート・行内編集・任意項目名Dialog・サマリー・計算・schema/migration・store
     search/           検索Dialog・debounce・検索状態表示
-  test/fixtures/      実APIから取得したCPU検索レスポンス
+  test/fixtures/      実APIのカテゴリ一覧・CPU keyword検索・cursor一覧レスポンス
   App.tsx             画面と検索Dialogの組み立て
   main.tsx            React・QueryClientの初期化
   styles.css          デザイン変数・レスポンシブCSS

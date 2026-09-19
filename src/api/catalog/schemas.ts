@@ -1,13 +1,16 @@
 import { z } from 'zod'
-import { partCategorySchema } from '../../domain/categories'
 
-// Contract checked against pc-parts-catalog/docs/cloudflare-production.md,
-// src/worker.js and src/model.js (2026-09-13). Missing spec values are null.
+// Contract: pc-parts-catalog 04a9d37 (2026-09-19), src/worker.js,
+// src/model.js, src/extended-models.js and docs/pagination.md.
+// API category discovery is independent of the nine supported UI/spec variants.
+export const catalogCategorySchema = z.string().min(1)
 const text = z.string().nullable()
 const real = z.number().nullable()
 const integer = z.number().int().nullable()
 const commonProductFields = {
   id: z.number().int().positive(),
+  // Older saved products lack source. The HTTP boundary below requires it.
+  source: z.string().min(1).optional(),
   upstream_id: z.string().min(1),
   upstream_key: z.string().min(1),
   manufacturer: text,
@@ -70,15 +73,21 @@ export const catalogSourceSchema = z.object({
   name: z.string(), url: z.httpUrl(), license: z.string(), license_url: z.httpUrl(), attribution: z.string(),
 })
 
+export const catalogProductResponseSchema = z.intersection(
+  catalogProductSchema,
+  z.object({ source: z.string().min(1) }),
+)
+
 export const searchResponseSchema = z.object({
-  data: z.array(catalogProductSchema),
+  data: z.array(catalogProductResponseSchema),
   meta: z.object({
     limit: z.number().int().min(1).max(50),
     offset: z.number().int().nonnegative(),
     returned: z.number().int().nonnegative(),
     has_more: z.boolean(),
     next_offset: z.number().int().nonnegative().nullable(),
-    window_limit: z.number().int().positive(),
+    next_cursor: z.string().min(1).nullable(),
+    window_limit: z.number().int().positive().nullable(),
     window_exhausted: z.boolean(),
     source: catalogSourceSchema,
   }),
@@ -86,4 +95,4 @@ export const searchResponseSchema = z.object({
   message: 'Returned count must match the page',
 })
 
-export const categoriesResponseSchema = z.object({ categories: z.array(partCategorySchema).min(1) })
+export const categoriesResponseSchema = z.object({ categories: z.array(catalogCategorySchema).min(1) })

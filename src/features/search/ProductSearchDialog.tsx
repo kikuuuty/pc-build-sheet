@@ -16,6 +16,9 @@ export type SearchRequest = {
   returnFocus: RefObject<HTMLButtonElement | null>
 }
 type Props = SearchRequest & { onClose: () => void; onSelected: (name: string) => void }
+type Pagination =
+  | { mode: 'keyword'; offsets: number[] }
+  | { mode: 'listing'; cursors: (string | undefined)[] }
 
 export function ProductSearchDialog({ category, target, returnFocus, onClose, onSelected }: Props) {
   const [input, setInput] = useState('')
@@ -45,15 +48,22 @@ export function ProductSearchDialog({ category, target, returnFocus, onClose, on
         : categories.isError ? <div className="search-body"><SearchError error={categories.error} onRetry={() => { void categories.refetch() }} /></div>
         : !categories.data.categories.includes(category.id) ? <div className="search-body"><p className="search-state">このカテゴリは現在カタログで利用できません。</p></div>
         : waiting ? <div className="search-body"><SearchLoading waiting /></div>
-        : <SearchResults key={debounced} category={category} target={target} query={debounced} onSelected={onSelected} />}
+        : <SearchResults key={`${category.id}:${debounced}`} category={category} target={target} query={debounced} onSelected={onSelected} />}
     </Dialog>
   )
 }
 
 function SearchResults({ category, target, query, onSelected }: Pick<Props, 'category' | 'target' | 'onSelected'> & { query: string }) {
-  const [offsets, setOffsets] = useState([0])
-  const offset = offsets[offsets.length - 1]
-  const search = useProductSearch({ category: category.id, query, offset })
+  // Remounting on query/category changes resets the history and aborts old requests.
+  const [pagination, setPagination] = useState<Pagination>(() => query
+    ? { mode: 'keyword', offsets: [0] }
+    : { mode: 'listing', cursors: [undefined] })
+  const search = useProductSearch(pagination.mode === 'keyword'
+    ? { category: category.id, mode: 'keyword', query, offset: pagination.offsets.at(-1) }
+    : { category: category.id, mode: 'listing', cursor: pagination.cursors.at(-1) })
+  const pageCount = pagination.mode === 'keyword' ? pagination.offsets.length : pagination.cursors.length
+  const hasNext = search.data !== undefined && (pagination.mode === 'keyword'
+    ? search.data.meta.next_offset !== null : search.data.meta.next_cursor !== null)
   const addItem = useBuildStore((state) => state.addItem)
   const replaceItem = useBuildStore((state) => state.replaceItem)
   const [selectionError, setSelectionError] = useState(false)
@@ -63,7 +73,22 @@ function SearchResults({ category, target, query, onSelected }: Pick<Props, 'cat
     if (saved) onSelected(product.name)
     else setSelectionError(true)
   }
-  function changePage(next: number[]) { setOffsets(next); scrollRef.current?.scrollTo({ top: 0 }) }
+  function changePage(next: Pagination) { setPagination(next); scrollRef.current?.scrollTo({ top: 0 }) }
+  function previousPage() {
+    if (pageCount <= 1) return
+    changePage(pagination.mode === 'keyword'
+      ? { mode: 'keyword', offsets: pagination.offsets.slice(0, -1) }
+      : { mode: 'listing', cursors: pagination.cursors.slice(0, -1) })
+  }
+  function nextPage() {
+    if (!search.data) return
+    const { next_offset, next_cursor } = search.data.meta
+    if (pagination.mode === 'keyword' && next_offset !== null) {
+      changePage({ mode: 'keyword', offsets: [...pagination.offsets, next_offset] })
+    } else if (pagination.mode === 'listing' && next_cursor !== null) {
+      changePage({ mode: 'listing', cursors: [...pagination.cursors, next_cursor] })
+    }
+  }
 
   return (
     <>
@@ -84,11 +109,11 @@ function SearchResults({ category, target, query, onSelected }: Pick<Props, 'cat
                 ))}
               </ul>
             )}
-            {(offset > 0 || search.data.meta.next_offset !== null) && (
+            {(pageCount > 1 || hasNext) && (
               <nav className="pagination" aria-label="検索結果のページ">
-                <button type="button" className="button secondary" disabled={offsets.length === 1 || search.isFetching} onClick={() => changePage(offsets.slice(0, -1))}><ChevronLeft size={15} aria-hidden="true" />前へ</button>
-                <span>{offsets.length}ページ</span>
-                <button type="button" className="button secondary" disabled={search.data.meta.next_offset === null || search.isFetching} onClick={() => { if (search.data.meta.next_offset !== null) changePage([...offsets, search.data.meta.next_offset]) }}>次へ<ChevronRight size={15} aria-hidden="true" /></button>
+                <button type="button" className="button secondary" disabled={pageCount === 1 || search.isFetching} onClick={previousPage}><ChevronLeft size={15} aria-hidden="true" />前へ</button>
+                <span>{pageCount}ページ</span>
+                <button type="button" className="button secondary" disabled={!hasNext || search.isFetching} onClick={nextPage}>次へ<ChevronRight size={15} aria-hidden="true" /></button>
               </nav>
             )}
             {search.data.meta.window_exhausted && <p className="window-note">表示上限に達しました。検索語を追加して絞り込んでください。</p>}

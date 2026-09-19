@@ -1,11 +1,19 @@
 import { expect, test, type Page } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import fixture from '../src/test/fixtures/cpu-search.json' with { type: 'json' }
+import categoriesFixture from '../src/test/fixtures/categories.json' with { type: 'json' }
 import { partCategories, type PartCategory } from '../src/domain/categories'
 import { catalogProductSchema } from '../src/api/catalog/schemas'
 
 const api = 'https://pc-parts-catalog.kikuuuty.workers.dev'
 const productName = fixture.data[0].name
+
+// Synthetic pages use production metadata for the requested pagination mode.
+function searchResponse(url: string, data = [makeProduct('cpu', productName)]) {
+  const params = new URL(url).searchParams
+  return { data, meta: { ...fixture.meta, returned: data.length,
+    offset: Number(params.get('offset') ?? 0), window_limit: params.has('q') ? 1000 : null } }
+}
 
 function makeProduct(category: PartCategory, name: string, index = 0) {
   const variant = catalogProductSchema.options.find((option) => option.shape.category.value === category)!
@@ -14,10 +22,11 @@ function makeProduct(category: PartCategory, name: string, index = 0) {
 }
 
 async function mockCatalog(page: Page) {
-  await page.route(`${api}/v1/categories`, (route) => route.fulfill({ json: { categories: partCategories.map(({ id }) => id) } }))
+  await page.route(`${api}/v1/categories`, (route) => route.fulfill({ json: categoriesFixture }))
   await page.route(`${api}/v1/search?**`, (route) => {
-    const query = new URL(route.request().url()).searchParams.get('q')
-    return route.fulfill({ json: query === 'missing' ? { ...fixture, data: [], meta: { ...fixture.meta, returned: 0 } } : fixture })
+    const params = new URL(route.request().url()).searchParams
+    const category = params.get('category') as PartCategory
+    return route.fulfill({ json: searchResponse(route.request().url(), params.get('q') === 'missing' ? [] : [makeProduct(category, productName)]) })
   })
 }
 
@@ -102,10 +111,121 @@ test('all category dialogs use the same search interaction and Escape restores f
     await opener.click()
     await expect(page.getByRole('dialog', { name: `${category.label}を選択`, exact: true })).toBeVisible()
     await expect(page.getByRole('textbox', { name: '製品名・型番で検索' })).toBeFocused()
+    await expect(page.getByRole('dialog').getByText(productName, { exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(opener).toBeFocused()
   }
+})
+
+test('unknown API categories do not block supported categories, but missing CPU does', async ({ page }) => {
+  const requests: string[] = []
+  page.on('request', (request) => { if (request.url().includes('/v1/search?')) requests.push(request.url()) })
+  await page.route(`${api}/v1/categories`, (route) => route.fulfill({ json: {
+    categories: [...categoriesFixture.categories.filter((category) => category !== 'cpu'), 'future_category'],
+  } }))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await expect(page.getByText('このカテゴリは現在カタログで利用できません。')).toBeVisible()
+  expect(requests).toEqual([])
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'GPUを選択', exact: true }).click()
+  await expect(page.getByRole('dialog').getByText(productName, { exact: true })).toBeVisible()
+  expect(requests).toHaveLength(1)
+})
+
+for (const mode of ['keyword', 'listing'] as const) {
+test(`${mode} pagination follows API tokens, goes back through history and resets on query changes`, async ({ page }) => {
+  const requests: Record<string, string>[] = []
+  const cursors = ['opaque-page-two', 'opaque-page-three']
+  await page.route(`${api}/v1/search?**`, (route) => {
+    const params = new URL(route.request().url()).searchParams
+    requests.push(Object.fromEntries(params))
+    const keyword = params.has('q')
+    // A listing that sends any offset fails, including on its first page.
+    if (!keyword && params.has('offset')) return route.fulfill({ status: 400, json: { error: 'Use cursor' } })
+    const index = keyword ? Number(params.get('offset')) / 20 : params.has('cursor') ? cursors.indexOf(params.get('cursor')!) + 1 : 0
+    const hasMore = index < 2
+    const products = Array.from({ length: hasMore ? 20 : 1 }, (_, item) => makeProduct('cpu', `${params.get('q') ?? '一覧'} page ${index + 1} item ${item + 1}`, index * 20 + item))
+    const response = searchResponse(route.request().url(), products)
+    return route.fulfill({ json: { ...response, meta: { ...response.meta, has_more: hasMore,
+      next_offset: keyword && hasMore ? (index + 1) * 20 : null,
+      next_cursor: !keyword && hasMore ? cursors[index] : null,
+    } } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  const input = dialog.getByRole('textbox')
+  if (mode === 'keyword') await input.fill('ryzen')
+  const label = mode === 'keyword' ? 'ryzen' : '一覧'
+  const next = dialog.getByRole('button', { name: '次へ', exact: true })
+  const previous = dialog.getByRole('button', { name: '前へ', exact: true })
+  async function expectPage(number: number, name = label) {
+    await expect(dialog.getByText(`${name} page ${number} item 1`, { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('navigation')).toContainText(`${number}ページ`)
+  }
+  await expectPage(1)
+  await expect(previous).toBeDisabled()
+  await next.click()
+  await expectPage(2)
+  await next.click()
+  await expectPage(3)
+  await expect(next).toBeDisabled()
+  await previous.click()
+  await expectPage(2)
+  await previous.click()
+  await expectPage(1)
+  await expect(previous).toBeDisabled()
+  await next.click()
+  await expectPage(2)
+  await input.fill('intel')
+  await expectPage(1, 'intel')
+  await expect(previous).toBeDisabled()
+  await next.click()
+  await expectPage(2, 'intel')
+  await dialog.getByRole('button', { name: '検索語をクリア' }).click()
+  await expectPage(1, '一覧')
+  await expect(previous).toBeDisabled()
+
+  expect(requests).toContainEqual({ category: 'cpu', limit: '20' })
+  expect(requests).toContainEqual({ category: 'cpu', limit: '20', q: 'intel', offset: '0' })
+  expect(requests).toContainEqual({ category: 'cpu', limit: '20', q: 'intel', offset: '20' })
+  for (let index = 1; index <= 2; index++) {
+    expect(requests).toContainEqual(mode === 'keyword'
+      ? { category: 'cpu', limit: '20', q: 'ryzen', offset: String(index * 20) }
+      : { category: 'cpu', limit: '20', cursor: cursors[index - 1] })
+  }
+  for (const params of requests) {
+    if (params.q) expect(params).not.toHaveProperty('cursor')
+    else expect(params).not.toHaveProperty('offset')
+  }
+})
+}
+
+test('query changes abort an in-flight cursor page and start keyword pagination at zero', async ({ page }) => {
+  const aborted: string[] = []
+  let pendingStarted = false
+  page.on('requestfailed', (request) => aborted.push(request.url()))
+  await page.route(`${api}/v1/search?**`, async (route) => {
+    const params = new URL(route.request().url()).searchParams
+    if (params.has('cursor')) {
+      pendingStarted = true
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+    }
+    const response = searchResponse(route.request().url())
+    await route.fulfill({ json: { ...response, meta: { ...response.meta,
+      has_more: !params.has('q'), next_cursor: params.has('q') ? null : 'pending-cursor',
+    } } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await page.getByRole('button', { name: '次へ', exact: true }).click()
+  await expect.poll(() => pendingStarted).toBe(true)
+  await page.getByRole('textbox').fill('9800x3d')
+  await expect.poll(() => aborted.some((url) => url.includes('cursor=pending-cursor'))).toBe(true)
+  await expect(page.getByRole('dialog').getByRole('status')).toContainText('「9800x3d」の検索結果')
+  await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
 test('broad selection and product areas support pointer and keyboard without intercepting row controls', async ({ page }, testInfo) => {
@@ -197,15 +317,17 @@ test(`wide search dialog is centered, scrolls only results and supports search a
     name: `${productName} ${index === 0 ? 'LongProductName'.repeat(12) : `モデル ${index + 1}`}`,
   }))
   const pageTwoProduct = { ...fixture.data[0], upstream_key: 'CPU/test-page-2', name: `${productName} 最終候補` }
-  const requests: { query: string | null; offset: string | null; limit: string | null }[] = []
+  const requests: { query: string | null; offset: string | null; cursor: string | null; limit: string | null }[] = []
   await page.route(`${api}/v1/search?**`, (route) => {
     const params = new URL(route.request().url()).searchParams
     const offset = Number(params.get('offset'))
-    requests.push({ query: params.get('q'), offset: params.get('offset'), limit: params.get('limit') })
+    requests.push({ query: params.get('q'), offset: params.get('offset'), cursor: params.get('cursor'), limit: params.get('limit') })
     return route.fulfill({ json: {
       ...fixture,
       data: offset === 0 ? pageOneProducts : [pageTwoProduct],
-      meta: { ...fixture.meta, offset, returned: offset === 0 ? 20 : 1, has_more: offset === 0, next_offset: offset === 0 ? 20 : null },
+      meta: { ...searchResponse(route.request().url()).meta, offset, returned: offset === 0 ? 20 : 1,
+        has_more: offset === 0, next_offset: params.has('q') && offset === 0 ? 20 : null,
+        next_cursor: !params.has('q') && offset === 0 ? 'page-2' : null },
     } })
   })
   if (mode === 'replace') await page.addInitScript((product) => localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version: 4, state: { items: [
@@ -240,7 +362,7 @@ test(`wide search dialog is centered, scrolls only results and supports search a
   await expect(dialog.getByRole('navigation')).toContainText('2ページ')
   await expect(next).toBeDisabled()
   await expect(input).toHaveValue('9800x3d')
-  expect(requests).toContainEqual({ query: '9800x3d', offset: '20', limit: '20' })
+  expect(requests).toContainEqual({ query: '9800x3d', offset: '20', cursor: null, limit: '20' })
   await previous.click()
   await expect(dialog.locator('.search-result')).toHaveCount(20)
   await next.click()
@@ -345,7 +467,7 @@ test('displays HTTP errors, retries manually and respects Retry-After', async ({
     attempts++
     return attempts === 1
       ? route.fulfill({ status: 429, headers: { 'Retry-After': '2', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Retry-After' }, json: { error: { message: 'DO NOT DISPLAY RAW ERROR' } } })
-      : route.fulfill({ json: fixture })
+      : route.fulfill({ json: searchResponse(route.request().url()) })
   })
   await page.goto('/')
   await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
@@ -375,7 +497,7 @@ test(`closing a pending ${mode} search aborts it and reopening starts with a cle
       pendingStarted = true
       await new Promise((resolve) => setTimeout(resolve, 1500))
     }
-    await route.fulfill({ json: fixture })
+    await route.fulfill({ json: searchResponse(route.request().url()) })
   })
   await page.goto('/')
   if (mode === 'replace') {
@@ -620,7 +742,7 @@ test('multiple storage rows remain independently editable and persist', async ({
     ...fixture.data[0], category: 'storage', name: 'Test SSD 2TB', upstream_key: 'Storage/test-ssd',
     specs: { storage_type: 'SSD', form_factor: 'M.2', interface: 'PCIe', capacity_gb: 2000, pcie_generation: 4, cache_mb: null, pcie_lanes: 4, nvme: 1 },
   }
-  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: { ...fixture, data: [ssd], meta: { ...fixture.meta, returned: 1 } } }))
+  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: searchResponse(route.request().url(), [catalogProductSchema.parse(ssd)]) }))
   await page.goto('/')
   const category = partCategories.find(({ id }) => id === 'storage')!
   await page.getByRole('button', { name: `${category.label}を選択`, exact: true }).click()
@@ -648,7 +770,7 @@ test('multiple storage rows remain independently editable and persist', async ({
 
 test('single product name opens replacement, cancellation keeps values, replacement resets price and preserves ID', async ({ page }) => {
   const replacement = makeProduct('cpu', 'AMD Ryzen 9 replacement', 2)
-  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: { ...fixture, data: [fixture.data[0], replacement], meta: { ...fixture.meta, returned: 2 } } }))
+  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: searchResponse(route.request().url(), [catalogProductSchema.parse(fixture.data[0]), replacement]) }))
   await page.goto('/')
   await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
   await page.getByRole('button', { name: `${productName}を構成に追加`, exact: true }).click()
@@ -683,7 +805,7 @@ test('single product name opens replacement, cancellation keeps values, replacem
 
 test('multiple category adds distinct products, replaces only the clicked row and clears stale price drafts', async ({ page }) => {
   const products = [makeProduct('storage', 'Samsung 990 PRO 2TB', 1), makeProduct('storage', 'WD Black SN850X 4TB', 2), makeProduct('storage', 'Replacement SSD', 3)]
-  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: { ...fixture, data: products, meta: { ...fixture.meta, returned: 3 } } }))
+  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: searchResponse(route.request().url(), products) }))
   await page.goto('/')
   await page.getByRole('button', { name: 'ストレージを選択', exact: true }).click()
   await page.getByRole('button', { name: `${products[0].name}を構成に追加`, exact: true }).click()
@@ -806,7 +928,7 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
   await page.screenshot({ path: testInfo.outputPath('filled-compact-sheet.png'), fullPage: true })
   const before = (await sheet.boundingBox())!.height
   const extra = makeProduct('storage', 'Additional SSD', 99)
-  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: { ...fixture, data: [extra], meta: { ...fixture.meta, returned: 1 } } }))
+  await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: searchResponse(route.request().url(), [extra]) }))
   await page.getByRole('button', { name: 'ストレージを追加', exact: true }).click()
   await page.getByRole('button', { name: `${extra.name}を構成に追加`, exact: true }).click()
   await expect(rows).toHaveCount(10)

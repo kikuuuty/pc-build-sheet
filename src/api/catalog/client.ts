@@ -70,13 +70,20 @@ export function getCategories(signal?: AbortSignal) {
   return request('/v1/categories', categoriesResponseSchema, signal)
 }
 
-export async function searchProducts({ category, query, offset = 0 }: SearchParams, signal?: AbortSignal) {
-  const params = new URLSearchParams({ category, limit: String(SEARCH_PAGE_SIZE), offset: String(offset) })
-  // Empty q is a 400 response; omitting it requests a category listing.
-  if (query.trim()) params.set('q', query.trim())
+export async function searchProducts(search: SearchParams, signal?: AbortSignal) {
+  const { category } = search
+  const params = new URLSearchParams({ category, limit: String(SEARCH_PAGE_SIZE) })
+  if (search.mode === 'keyword') {
+    // Callers select listing mode for empty input; never silently reuse its offset.
+    if (!search.query.trim()) throw new Error('Keyword search requires a nonempty query')
+    params.set('q', search.query.trim())
+    params.set('offset', String(search.offset ?? 0))
+  } else if (search.cursor !== undefined) params.set('cursor', search.cursor)
   const result = await request(`/v1/search?${params}`, searchResponseSchema, signal)
+  // Listing metadata always has offset=0, including subsequent cursor pages.
+  const expectedOffset = search.mode === 'keyword' ? search.offset ?? 0 : 0
   if (result.data.some((product) => product.category !== category)
-    || result.meta.offset !== offset || result.meta.limit !== SEARCH_PAGE_SIZE) {
+    || result.meta.offset !== expectedOffset || result.meta.limit !== SEARCH_PAGE_SIZE) {
     throw new CatalogError('invalid-response')
   }
   return result

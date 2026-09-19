@@ -1,0 +1,8 @@
+{
+  "categories": [
+    "cpu", "memory", "motherboard", "gpu", "storage", "psu", "case", "case_fan", "cpu_cooler",
+    "accessory", "capture_card", "chair", "desk", "headphones", "keyboard", "laptop", "lighting",
+    "microphone", "monitor", "mouse", "mousepad", "network_card", "os", "prebuilt_desktop",
+    "sound_card", "speaker", "stand", "thermal_compound", "vr_headset", "webcam"
+  ]
+}

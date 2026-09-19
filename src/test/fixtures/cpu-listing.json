@@ -1,0 +1,32 @@
+{
+  "data": [{
+    "id": 619,
+    "source": "buildcores",
+    "upstream_id": "cd030ee7-8539-4b8a-8fa8-1738ad51e50b",
+    "upstream_key": "CPU/cd030ee7-8539-4b8a-8fa8-1738ad51e50b",
+    "category": "cpu",
+    "manufacturer": null,
+    "name": "AMD Ryzen Threadripper 7970X",
+    "series": "Ryzen Threadripper",
+    "variant": null,
+    "release_year": null,
+    "manufacturer_url": null,
+    "specs": {
+      "manufacturer": null, "family": null, "generation": null, "socket": "sTR5",
+      "microarchitecture": "Zen 4", "core_family": "Storm Peak", "base_clock_ghz": 4,
+      "boost_clock_ghz": 5.3, "tdp_w": 350, "ppt_w": null, "max_memory_gb": 1,
+      "core_count": 32, "thread_count": 64, "performance_cores": 0, "efficiency_cores": 0,
+      "includes_cooler": 0
+    }
+  }],
+  "meta": {
+    "limit": 1, "offset": 0, "returned": 1, "has_more": true, "next_offset": null,
+    "next_cursor": "eyJwYXlsb2FkIjoie1widlwiOjEsXCJjYXRlZ29yeVwiOlwiY3B1XCIsXCJvcmRlclwiOlwiZGlzcGxheS12MVwiLFwiZXBvY2hcIjpcInN5bmMtZGMzY2IwM2YtMzM2MS00YmI0LWE1YzYtMzU4NDI2MGNkYjc5LWZ0czgtY2FjaGUzXCIsXCJmaW5nZXJwcmludFwiOlwiMmM2NWU4OGFhMTM5YWJiMzFjNThiY2IyNGYxYzc1MGZlZGY5M2JkZDEwYzc3NDk3YWEwY2E3NTJiNzc4N2Y3MVwiLFwibGFzdFwiOltcIlwiLDAsXCJSeXplbiBUaHJlYWRyaXBwZXJcIixcIkFNRCBSeXplbiBUaHJlYWRyaXBwZXIgNzk3MFhcIiw2MTldfSIsImNoZWNrc3VtIjoiMzBkN2EyOTY5MzIzNTgyYzQ1ZGE0YTAxYWM0NjZlZmE1YzU5Y2E0ZmU1MmFhMTRiODVlZDcwNTU1Y2U3YmJlYSJ9",
+    "window_limit": null, "window_exhausted": false,
+    "source": {
+      "name": "BuildCores OpenDB", "url": "https://github.com/buildcores/buildcores-open-db",
+      "license": "ODC-By 1.0", "license_url": "https://opendatacommons.org/licenses/by/1-0/",
+      "attribution": "Contains information from BuildCores OpenDB, made available under the ODC Attribution License."
+    }
+  }
+}

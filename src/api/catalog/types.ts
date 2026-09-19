@@ -1,8 +1,13 @@
 import type { z } from 'zod'
-import type { catalogProductSchema, catalogSourceSchema, searchResponseSchema } from './schemas'
+import type { catalogCategorySchema, catalogProductSchema, catalogSourceSchema, categoriesResponseSchema, searchResponseSchema } from './schemas'
 import type { PartCategory } from '../../domain/categories'
 
 export type CatalogProduct = z.infer<typeof catalogProductSchema>
 export type CatalogSource = z.infer<typeof catalogSourceSchema>
 export type SearchResponse = z.infer<typeof searchResponseSchema>
-export type SearchParams = { category: PartCategory; query: string; offset?: number }
+export type CatalogCategory = z.infer<typeof catalogCategorySchema>
+export type CategoriesResponse = z.infer<typeof categoriesResponseSchema>
+export type SearchParams = { category: PartCategory } & (
+  | { mode: 'keyword'; query: string; offset?: number; cursor?: never }
+  | { mode: 'listing'; cursor?: string; query?: never; offset?: never }
+)

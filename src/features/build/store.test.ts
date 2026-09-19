@@ -73,6 +73,21 @@ describe('build state and persistence', () => {
     expect(restored.getState().items).toEqual([])
   })
 
+  it('restores existing v5 products without source after the API contract update', async () => {
+    const { storage, data } = memoryStorage()
+    const oldProduct = { ...product, source: undefined }
+    data.set(BUILD_STORAGE_KEY, JSON.stringify({ version: 5, state: { items: [
+      { id: 'saved-cpu', kind: 'catalog', category: 'cpu', product: oldProduct, price: 32800 },
+    ] } }))
+    const { store, report } = await setup(storage)
+    expect(report).not.toHaveBeenCalled()
+    expect(store.getState().items).toHaveLength(1)
+    expect(store.getState().items[0]).toMatchObject({ id: 'saved-cpu', price: 32800, product: { name: product.name } })
+    store.getState().updateItem('saved-cpu', { price: 33000 })
+    const { store: restored } = await setup(storage)
+    expect(restored.getState().items[0]).toMatchObject({ id: 'saved-cpu', price: 33000 })
+  })
+
   it('persists clearBuild and remains empty on reload', async () => {
     const { storage } = memoryStorage()
     const { store } = await setup(storage)
