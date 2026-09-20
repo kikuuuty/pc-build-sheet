@@ -4,11 +4,26 @@ import listingFixture from '../../test/fixtures/cpu-listing.json'
 import categories from '../../test/fixtures/categories.json'
 import { CatalogError, catalogRetryDelay, getCategories, searchProducts, shouldRetryCatalogRequest } from './client'
 import type { SearchParams } from './types'
+import { optionalCategories } from '../../domain/categories'
+import { optionalProduct } from '../../test/optional-products'
 
 const listing = { ...listingFixture, meta: { ...listingFixture.meta, limit: 20 } }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('catalog client', () => {
+  it.each(optionalCategories)('uses GET listing and keyword search for $id', async ({ id }) => {
+    const product = optionalProduct(id)
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(Response.json({ ...fixture, data: [product], meta: { ...fixture.meta, window_limit: null } }))
+      .mockResolvedValueOnce(Response.json({ ...fixture, data: [product] }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect((await searchProducts({ category: id, mode: 'listing' })).data[0]).toEqual(product)
+    expect((await searchProducts({ category: id, mode: 'keyword', query: 'test' })).data[0]).toEqual(product)
+    expect(Object.fromEntries(new URL(fetchMock.mock.calls[0][0] as string).searchParams)).toEqual({ category: id, limit: '20' })
+    expect(Object.fromEntries(new URL(fetchMock.mock.calls[1][0] as string).searchParams)).toEqual({ category: id, limit: '20', q: 'test', offset: '0' })
+    for (const [, options] of fetchMock.mock.calls) expect((options as RequestInit).method ?? 'GET').toBe('GET')
+  })
+
   it('encodes trimmed keywords, page size and offset, and passes cancellation', async () => {
     const fetchMock = vi.fn().mockResolvedValue(Response.json(fixture))
     vi.stubGlobal('fetch', fetchMock)

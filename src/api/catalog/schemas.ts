@@ -1,8 +1,9 @@
 import { z } from 'zod'
+import { partCategories, type PartCategory } from '../../domain/categories'
 
 // Contract: pc-parts-catalog 04a9d37 (2026-09-19), src/worker.js,
 // src/model.js, src/extended-models.js and docs/pagination.md.
-// API category discovery is independent of the nine supported UI/spec variants.
+// Discovery also accepts future API categories; selectable IDs come from the UI registry.
 export const catalogCategorySchema = z.string().min(1)
 const text = z.string().nullable()
 const real = z.number().nullable()
@@ -21,7 +22,7 @@ const commonProductFields = {
   manufacturer_url: text,
 }
 
-export const catalogProductSchema = z.discriminatedUnion('category', [
+const typedProductSchema = z.discriminatedUnion('category', [
   z.object({ ...commonProductFields, category: z.literal('cpu'), specs: z.object({
     manufacturer: text, family: text, generation: text, socket: text,
     microarchitecture: text, core_family: text, base_clock_ghz: real,
@@ -67,6 +68,39 @@ export const catalogProductSchema = z.discriminatedUnion('category', [
     airflow_max_cfm: real, noise_min_db: real, noise_max_db: real,
     static_pressure_mmh2o: real, quantity: integer, pwm: integer,
   }) }),
+  z.object({ ...commonProductFields, category: z.literal('monitor'), specs: z.object({
+    screen_size_inches: real, resolution_width: integer, resolution_height: integer,
+    refresh_rate_hz: real, panel_type: text, response_time_ms: real, hdr: text,
+    brightness_nits: real, adaptive_sync: text, aspect_ratio: text,
+  }) }),
+  z.object({ ...commonProductFields, category: z.literal('keyboard'), specs: z.object({
+    switch_model: text, switch_type: text, size: text, layout: text,
+    hot_swappable: integer, polling_rate_hz: real, battery_capacity_mah: real,
+  }) }),
+  z.object({ ...commonProductFields, category: z.literal('mouse'), specs: z.object({
+    shape: text, size: text, sensor: text, weight_g: real, max_dpi: real,
+    polling_rate_hz: real, buttons: integer, battery_life_hours: real,
+    length_mm: real, width_mm: real, height_mm: real,
+  }) }),
+  z.object({ ...commonProductFields, category: z.literal('headphones'), specs: z.object({
+    headphone_type: text, ear_cup_type: text, driver_size_mm: real, weight_g: real,
+    battery_life_hours: real, has_microphone: integer,
+  }) }),
+  z.object({ ...commonProductFields, category: z.literal('webcam'), specs: z.object({
+    resolution: text, frame_rate_fps: integer,
+  }) }),
+])
+
+// extended-models.js intentionally has no scalar specs for the remaining categories.
+// GET search does not include facets (e.g. connectivity), so do not invent those fields.
+type UntypedCategory = Exclude<PartCategory, z.infer<typeof typedProductSchema>['category']>
+const typedCategories = new Set<string>(typedProductSchema.options.map((option) => option.shape.category.value))
+const untypedCategories = partCategories.map(({ id }) => id).filter((id): id is UntypedCategory => !typedCategories.has(id))
+export const catalogProductSchema = z.discriminatedUnion('category', [
+  ...typedProductSchema.options,
+  ...untypedCategories.map((category) => z.object({
+    ...commonProductFields, category: z.literal(category), specs: z.object({}),
+  })),
 ])
 
 export const catalogSourceSchema = z.object({

@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { writeFile } from 'node:fs/promises'
 import fixture from '../src/test/fixtures/cpu-search.json' with { type: 'json' }
 import categoriesFixture from '../src/test/fixtures/categories.json' with { type: 'json' }
-import { partCategories, type PartCategory } from '../src/domain/categories'
+import { additionGroups, addableOptionalCategories, mainCategories, partCategories, optionalCategories, type PartCategory } from '../src/domain/categories'
 import { catalogProductSchema } from '../src/api/catalog/schemas'
 
 const api = 'https://pc-parts-catalog.kikuuuty.workers.dev'
@@ -55,14 +55,14 @@ async function expectCenteredSearchDialog(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 }
 
-test('9 categories, real build actions, persistence, reset and responsive layout', async ({ page }, testInfo) => {
+test('10 main categories, real build actions, persistence, reset and responsive layout', async ({ page }, testInfo) => {
   const issues: string[] = []
   page.on('pageerror', (error) => issues.push(error.message))
   page.on('console', (message) => { if (['warning', 'error'].includes(message.type())) issues.push(message.text()) })
   await page.goto('/')
   await expect(page.getByRole('heading', { name: '自作PC構成シート', exact: true })).toBeVisible()
   const sheet = page.getByRole('region', { name: '構成パーツ' })
-  for (const category of partCategories) await expect(sheet.getByRole('heading', { name: category.label, exact: true })).toBeVisible()
+  for (const category of mainCategories) await expect(sheet.getByRole('heading', { name: category.label, exact: true })).toBeVisible()
   for (const section of await sheet.locator('.category-row').all()) {
     const height = (await section.boundingBox())!.height
     expect(height).toBeGreaterThanOrEqual(68)
@@ -104,10 +104,11 @@ test('9 categories, real build actions, persistence, reset and responsive layout
   expect(issues).toEqual([])
 })
 
-test('all category dialogs use the same search interaction and Escape restores focus', async ({ page }) => {
+test('all selectable category dialogs use the same search interaction and Escape restores focus', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.goto('/')
-  for (const category of partCategories) {
-    const opener = page.getByRole('button', { name: `${category.label}を選択`, exact: true })
+  for (const category of [...mainCategories, ...addableOptionalCategories]) {
+    const opener = page.getByRole('button', { name: `${category.label}を${category.placement === 'main' ? '選択' : '追加'}`, exact: true })
     await opener.click()
     await expect(page.getByRole('dialog', { name: `${category.label}を選択`, exact: true })).toBeVisible()
     await expect(page.getByRole('textbox', { name: '製品名・型番で検索' })).toBeFocused()
@@ -116,6 +117,241 @@ test('all category dialogs use the same search interaction and Escape restores f
     await expect(page.getByRole('dialog')).toHaveCount(0)
     await expect(opener).toBeFocused()
   }
+})
+
+test('main rows are permanent, custom entry is removed and additions sit below the summary', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.locator('.category-row h3')).toHaveText([
+    '01CPU', '02CPUクーラー', '03メモリ', '04マザーボード', '05GPU', '06ストレージ', '07電源', '08ケース', '09ケースファン', '10OS',
+  ])
+  const additions = page.getByRole('region', { name: '製品を追加', exact: true })
+  await expect(additions.getByRole('button')).toHaveCount(13)
+  for (const category of optionalCategories) {
+    await expect(page.getByRole('region', { name: category.label, exact: true })).toHaveCount(0)
+    const button = additions.getByRole('button', { name: `${category.label}を追加`, exact: true })
+    if (category.additionGroup === null) await expect(button).toHaveCount(0)
+    else await expect(button).toBeVisible()
+  }
+  await expect(additions.getByRole('heading', { level: 3 })).toHaveText(additionGroups.map(({ label }) => label))
+  for (const group of additionGroups) {
+    await expect(additions.getByRole('group', { name: group.label, exact: true }).getByRole('button'))
+      .toHaveText(addableOptionalCategories.filter((category) => category.additionGroup === group.id).map(({ label }) => label))
+  }
+  await expect(page.getByRole('region', { name: 'その他', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: '任意項目を追加', exact: true })).toHaveCount(0)
+  await expect(page.getByText('任意項目を入力', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.sheet .optional-products')).toHaveCount(0)
+  for (const width of [1280, 740, 320]) {
+    await page.setViewportSize({ width, height: 960 })
+    const summary = (await page.getByRole('complementary', { name: '構成サマリー', exact: true }).boundingBox())!
+    const panel = (await additions.boundingBox())!
+    const sheet = (await page.locator('.sheet').boundingBox())!
+    expect(panel.y).toBeGreaterThanOrEqual(summary.y + summary.height)
+    expect(Math.abs(panel.x - summary.x)).toBeLessThan(1)
+    expect(Math.abs(panel.width - summary.width)).toBeLessThan(1)
+    if (width > 1100) expect(summary.x).toBeGreaterThan(sheet.x + sheet.width)
+    else expect(summary.y).toBeGreaterThanOrEqual(sheet.y + sheet.height)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    const buttonSizes = await additions.getByRole('button').evaluateAll((buttons) => buttons.map((button) => {
+      const { width, height } = button.getBoundingClientRect()
+      return { width, height, fits: button.scrollWidth <= button.clientWidth && button.scrollHeight <= button.clientHeight }
+    }))
+    expect(Math.max(...buttonSizes.map(({ width }) => width)) - Math.min(...buttonSizes.map(({ width }) => width))).toBeLessThan(1)
+    for (const button of buttonSizes) {
+      expect(button.height).toBe(34)
+      expect(button.fits).toBe(true)
+    }
+    for (const group of await additions.getByRole('group').all()) {
+      const boxes = await group.getByRole('button').evaluateAll((buttons) => buttons.map((button) => {
+        const { x, y, width } = button.getBoundingClientRect()
+        return { x, y, width }
+      }))
+      expect(boxes[0].y).toBe(boxes[1].y)
+      expect(boxes[1].x).toBeGreaterThan(boxes[0].x + boxes[0].width)
+      if (boxes.length > 2) {
+        expect(boxes[2].x).toBe(boxes[0].x)
+        expect(boxes[2].y).toBeGreaterThan(boxes[0].y)
+      }
+    }
+  }
+})
+
+for (const category of addableOptionalCategories) {
+test(`optional ${category.id}: search, cardinality, replace, restore, remove and focus`, async ({ page }) => {
+  const requests: { category: string | null; query: string | null; method: string }[] = []
+  const products = [makeProduct(category.id, `${category.label} test`, 1), makeProduct(category.id, `${category.label} replacement`, 2)]
+  await page.route(`${api}/v1/search?**`, (route) => {
+    const params = new URL(route.request().url()).searchParams
+    requests.push({ category: params.get('category'), query: params.get('q'), method: route.request().method() })
+    return route.fulfill({ json: searchResponse(route.request().url(), products) })
+  })
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto('/')
+  const additions = page.getByRole('region', { name: '製品を追加', exact: true })
+  const opener = additions.getByRole('button', { name: `${category.label}を追加`, exact: true })
+  const section = page.getByRole('region', { name: category.label, exact: true })
+  await opener.click()
+  await expect(page.getByRole('dialog').getByText(products[0].name, { exact: true })).toBeVisible()
+  await page.getByRole('dialog').getByRole('textbox').fill('test')
+  await expect(page.getByRole('dialog').getByRole('status')).toContainText('「test」の検索結果')
+  await page.getByRole('button', { name: `${products[0].name}を構成に追加`, exact: true }).click()
+  await expect(section).toHaveCount(1)
+  await expect(section.locator('.build-item')).toHaveCount(1)
+  const productButton = section.getByRole('button', { name: `${products[0].name}を変更`, exact: true })
+  await expect(opener).toHaveCount(0)
+  await expect(productButton).toBeFocused()
+  await section.getByRole('button', { name: `${category.label}を追加`, exact: true }).click()
+  await page.getByRole('button', { name: `${products[0].name}を構成に追加`, exact: true }).click()
+  await expect(section).toHaveCount(1)
+  await expect(section.locator('.build-item')).toHaveCount(2)
+  await expect(section.getByRole('button', { name: `${category.label}を追加`, exact: true })).toBeVisible()
+  const rows = section.locator('.build-item')
+  await rows.first().getByRole('textbox').fill('10000')
+  await rows.first().getByRole('textbox').press('Enter')
+  await productButton.first().click()
+  await page.getByRole('button', { name: `${products[1].name}に置き換える`, exact: true }).click()
+  await expect(rows.first().getByRole('button', { name: `${products[1].name}を変更`, exact: true })).toBeFocused()
+  await expect(rows.first().getByRole('textbox')).toHaveValue('')
+  await rows.first().getByRole('textbox').fill('22000')
+  await rows.first().getByRole('textbox').press('Enter')
+  await page.reload()
+  await expect(rows).toHaveCount(2)
+  await expect(rows.first().getByText(products[1].name, { exact: true })).toBeVisible()
+  await expect(rows.first().getByRole('textbox')).toHaveValue('22000')
+  await expect(opener).toHaveCount(0)
+  await expect(page.locator('.category-row h3').nth(mainCategories.length)).toHaveText(`＋${category.label}`)
+  await expect(page.locator('.workspace-sidebar > :last-child')).toHaveAttribute('aria-labelledby', 'optional-products-title')
+  await rows.last().getByRole('button', { name: `${products[0].name}を構成から削除`, exact: true }).click()
+  await expect(rows).toHaveCount(1)
+  await expect(opener).toHaveCount(0)
+  await rows.first().getByRole('button', { name: `${products[1].name}を構成から削除`, exact: true }).click()
+  await expect(section).toHaveCount(0)
+  await expect(opener).toBeFocused()
+  await expect(additions.getByRole('button')).toHaveCount(13)
+  await page.reload()
+  await expect(section).toHaveCount(0)
+  await expect(page.locator('.category-row')).toHaveCount(10)
+  expect(requests).toContainEqual({ category: category.id, query: null, method: 'GET' })
+  expect(requests).toContainEqual({ category: category.id, query: 'test', method: 'GET' })
+  expect(errors).toEqual([])
+})
+}
+
+for (const initial of ['empty', 'saved-v5'] as const) {
+test(`OS is a permanent single category: ${initial}, replace, reload and remove`, async ({ page }) => {
+  const products = [makeProduct('os', 'Windows 11 Home', 1), makeProduct('os', 'Windows 11 Pro', 2)]
+  const requests: string[] = []
+  await page.route(`${api}/v1/search?**`, (route) => {
+    requests.push(new URL(route.request().url()).searchParams.get('category')!)
+    return route.fulfill({ json: searchResponse(route.request().url(), products) })
+  })
+  if (initial === 'saved-v5') await page.addInitScript((product) => {
+    if (!localStorage.getItem('pc-build-sheet:build')) localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version: 5, state: { items: [
+      { id: 'previously-optional-os', kind: 'catalog', category: 'os', product, price: 22000 },
+    ] } }))
+  }, products[0])
+  await page.goto('/')
+  const section = page.getByRole('region', { name: 'OS', exact: true })
+  const additions = page.getByRole('region', { name: '製品を追加', exact: true })
+  await expect(page.locator('.category-row h3').nth(9)).toHaveText('10OS')
+  await expect(additions.getByRole('button', { name: 'OSを追加', exact: true })).toHaveCount(0)
+  const opener = section.getByRole('button', { name: 'OSを選択', exact: true })
+  if (initial === 'empty') {
+    await expect(opener).toBeVisible()
+    await expect(page.getByRole('alert')).toHaveCount(0)
+    await opener.click()
+    await page.getByRole('button', { name: `${products[0].name}を構成に追加`, exact: true }).click()
+    await expect(section.getByRole('button', { name: `${products[0].name}を変更`, exact: true })).toBeFocused()
+  } else {
+    await expect(section.getByRole('textbox')).toHaveValue('22000')
+    await expect(page.locator('.summary-total dd')).toHaveText('￥22,000')
+  }
+  await expect(section.locator('.build-item')).toHaveCount(1)
+  await expect(opener).toHaveCount(0)
+  await expect(section.getByRole('button', { name: 'OSを追加', exact: true })).toHaveCount(0)
+  const original = await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as { version: number; state: { items: { id: string }[] } })
+  expect(original.version).toBe(5)
+  if (initial === 'saved-v5') expect(original.state.items[0].id).toBe('previously-optional-os')
+  await section.getByRole('textbox').fill('30000')
+  await section.getByRole('textbox').press('Enter')
+  await page.reload()
+  await expect(section.getByRole('textbox')).toHaveValue('30000')
+  const productButton = section.getByRole('button', { name: `${products[0].name}を変更`, exact: true })
+  await productButton.click()
+  await page.keyboard.press('Escape')
+  await expect(productButton).toBeFocused()
+  await expect(section.getByRole('textbox')).toHaveValue('30000')
+  await productButton.click()
+  await page.getByRole('button', { name: `${products[1].name}に置き換える`, exact: true }).click()
+  await expect(section.getByRole('button', { name: `${products[1].name}を変更`, exact: true })).toBeFocused()
+  await expect(section.getByRole('textbox')).toHaveValue('')
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as unknown)).toMatchObject({ version: 5, state: { items: [
+    { id: original.state.items[0].id, category: 'os', product: products[1], price: null },
+  ] } })
+  await page.reload()
+  await expect(section.getByText(products[1].name, { exact: true })).toBeVisible()
+  await section.getByRole('button', { name: `${products[1].name}を構成から削除`, exact: true }).click()
+  await expect(opener).toBeFocused()
+  await page.reload()
+  await expect(opener).toBeVisible()
+  await expect(page.locator('.category-row')).toHaveCount(10)
+  await expect(section.locator('.build-item')).toHaveCount(0)
+  await expect(additions.getByRole('button')).toHaveCount(13)
+  await expect(page.getByRole('alert')).toHaveCount(0)
+  expect(requests.length).toBeGreaterThan(0)
+  expect(requests.every((category) => category === 'os')).toBe(true)
+})
+}
+
+test('empty groups disappear and return when the last product in a category is removed', async ({ page }) => {
+  const items = addableOptionalCategories.map(({ id }) => ({ id, kind: 'catalog', category: id, product: makeProduct(id, `Saved ${id}`), price: 1000 }))
+  await page.addInitScript((items) => {
+    if (!localStorage.getItem('pc-build-sheet:build')) localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version: 5, state: { items } }))
+  }, items)
+  await page.goto('/')
+  const additions = page.getByRole('region', { name: '製品を追加', exact: true })
+  await expect(page.locator('.build-item')).toHaveCount(13)
+  await expect(additions.getByRole('button')).toHaveCount(0)
+  await expect(additions.getByRole('group')).toHaveCount(0)
+  await expect(additions.getByText('追加できるカテゴリはすべて構成に含まれています。')).toBeVisible()
+  await page.getByRole('button', { name: 'Saved mousepadを構成から削除', exact: true }).click()
+  const group = additions.getByRole('group', { name: '周辺機器', exact: true })
+  await expect(group).toBeVisible()
+  await expect(additions.getByRole('group')).toHaveCount(1)
+  const opener = group.getByRole('button', { name: 'マウスパッドを追加', exact: true })
+  await expect(opener).toBeFocused()
+  await page.reload()
+  await opener.click()
+  await page.getByRole('button', { name: `${productName}を構成に追加`, exact: true }).click()
+  await expect(group).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'マウスパッド', exact: true }).getByRole('button', { name: `${productName}を変更`, exact: true })).toBeFocused()
+})
+
+test('excluded categories remain restorable and removable but never return to suggestions', async ({ page }) => {
+  const excluded = optionalCategories.filter((category) => category.additionGroup === null)
+  const items = excluded.map(({ id }) => ({ id, kind: 'catalog', category: id, product: makeProduct(id, `Saved ${id}`), price: 1000 }))
+  await page.addInitScript((items) => {
+    if (!localStorage.getItem('pc-build-sheet:build')) localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version: 5, state: { items } }))
+  }, items)
+  await page.goto('/')
+  const additions = page.getByRole('region', { name: '製品を追加', exact: true })
+  await expect(page.locator('.build-item')).toHaveCount(7)
+  await expect(page.locator('.summary-total dd')).toHaveText('￥7,000')
+  await page.reload()
+  for (const { id, label } of excluded) {
+    const section = page.getByRole('region', { name: label, exact: true })
+    await expect(section.getByText(`Saved ${id}`, { exact: true })).toBeVisible()
+    await expect(section.getByRole('textbox')).toHaveValue('1000')
+    await section.getByRole('button', { name: `Saved ${id}を構成から削除`, exact: true }).click()
+    await expect(section).toHaveCount(0)
+    await expect(additions.getByRole('button', { name: `${label}を追加`, exact: true })).toHaveCount(0)
+  }
+  await expect(additions.getByRole('button')).toHaveCount(13)
+  await expect(page.getByRole('button', { name: 'CPUを選択', exact: true })).toBeFocused()
+  await page.reload()
+  await expect(page.locator('.build-item')).toHaveCount(0)
+  await expect(page.locator('.summary-total dd')).toHaveText('￥0')
 })
 
 test('unknown API categories do not block supported categories, but missing CPU does', async ({ page }) => {
@@ -233,7 +469,7 @@ test('broad selection and product areas support pointer and keyboard without int
   const viewport = page.viewportSize()!
   for (const width of [320, 393, 740, 1024, 1280, 1440]) {
     await page.setViewportSize({ width, height: 960 })
-    for (const category of partCategories) {
+    for (const category of mainCategories) {
       const section = page.getByRole('region', { name: category.label, exact: true })
       const opener = section.getByRole('button', { name: `${category.label}を選択`, exact: true })
       await expect(opener).toHaveText('—パーツを選択')
@@ -527,7 +763,7 @@ test('invalid persisted data gives a visible recovery message', async ({ page })
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
-test('estimate: inline editing, zero prices, persistence, custom items and deletion', async ({ page }, testInfo) => {
+test('estimate: inline editing, zero prices, persistence, saved custom items and deletion', async ({ page }, testInfo) => {
   const errors: string[] = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.goto('/')
@@ -569,14 +805,16 @@ test('estimate: inline editing, zero prices, persistence, custom items and delet
   await expect(page.locator('.summary-count strong')).toHaveText('1')
   await expect(total).toHaveText('￥32,800')
 
-  const customOpener = page.getByRole('button', { name: '任意項目を追加', exact: true })
-  await customOpener.click()
-  await expect(page.getByRole('textbox', { name: '名前（必須）', exact: true })).toBeFocused()
-  await page.getByRole('textbox', { name: '名前（必須）', exact: true }).fill('Windows 11 Pro')
+  // Older saved custom items remain visible/editable even though new entry is removed.
+  await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as { state: { items: unknown[] } }
+    saved.state.items.push({ id: 'saved-custom', kind: 'custom', name: 'Windows 11 Pro', price: null })
+    localStorage.setItem('pc-build-sheet:build', JSON.stringify(saved))
+  })
+  await page.reload()
   await expect(page.locator('textarea')).toHaveCount(0)
-  await page.getByRole('button', { name: '追加する', exact: true }).click()
-  await expect(customOpener).toBeFocused()
-  const custom = page.getByRole('region', { name: 'その他', exact: true }).locator('.build-item')
+  await expect(page.getByRole('button', { name: '任意項目を追加', exact: true })).toHaveCount(0)
+  const custom = page.getByRole('region', { name: '保存済みの任意項目', exact: true }).locator('.build-item')
   await custom.getByRole('textbox').fill('22000')
   await custom.getByRole('textbox').press('Enter')
   await expect(total).toHaveText('￥54,800')
@@ -600,7 +838,8 @@ test('estimate: inline editing, zero prices, persistence, custom items and delet
   await expect(total).toHaveText('￥22,000')
   await expect(page.locator('.summary-count strong')).toHaveText('1')
   await custom.getByRole('button', { name: 'Windows 11 Pro 日本語版を構成から削除', exact: true }).click()
-  await expect(customOpener).toBeFocused()
+  await expect(page.getByRole('button', { name: 'CPUを選択', exact: true })).toBeFocused()
+  await expect(page.getByRole('region', { name: '保存済みの任意項目', exact: true })).toHaveCount(0)
   await expect(total).toHaveText('￥0')
   await expect(page.locator('.summary-count strong')).toHaveText('0')
   await page.reload()
@@ -610,14 +849,18 @@ test('estimate: inline editing, zero prices, persistence, custom items and delet
 
 test('price drafts, zero versus null, invalid values and small-screen long content', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 320, height: 568 })
-  await page.goto('/')
-  await page.getByRole('button', { name: '任意項目を追加', exact: true }).click()
   const name = 'LongCustomName'.repeat(14)
-  await page.getByRole('textbox', { name: '名前（必須）', exact: true }).fill(name)
+  await page.addInitScript((name) => {
+    if (!localStorage.getItem('pc-build-sheet:build')) localStorage.setItem('pc-build-sheet:build', JSON.stringify({ version: 5, state: { items: [
+      { id: 'saved-custom', kind: 'custom', name, price: null },
+    ] } }))
+  }, name)
+  await page.goto('/')
+  await page.getByRole('button', { name: `${name}の名前を編集`, exact: true }).click()
   await expect(page.locator('textarea')).toHaveCount(0)
   const dialog = page.getByRole('dialog')
   expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
-  await page.getByRole('button', { name: '追加する', exact: true }).click()
+  await page.getByRole('button', { name: '保存する', exact: true }).click()
   const row = page.locator('.build-item')
   const price = row.getByRole('textbox')
   await price.fill('100')
@@ -848,9 +1091,9 @@ test('multiple category adds distinct products, replaces only the clicked row an
 })
 
 test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap after v2 migration', async ({ page, isMobile }, testInfo) => {
-  const names = ['AMD Ryzen 7 9800X3D', 'DeepCool MYSTIQUE 240mm', 'MSI B760M MORTAR WIFI', 'DDR5 32GB Kit', 'GeForce RTX 5070', 'Samsung 990 PRO 2TB', 'Corsair RM850x', 'Fractal Design North', 'Noctua NF-A12x25']
-  const manufacturers = ['AMD', 'DeepCool', 'MSI', 'G.Skill', 'NVIDIA', 'Samsung', 'Corsair', 'Fractal Design', 'Noctua']
-  const items = partCategories.map((category, index) => ({
+  const names = ['AMD Ryzen 7 9800X3D', 'DeepCool MYSTIQUE 240mm', 'DDR5 32GB Kit', 'MSI B760M MORTAR WIFI', 'GeForce RTX 5070', 'Samsung 990 PRO 2TB', 'Corsair RM850x', 'Fractal Design North', 'Noctua NF-A12x25', 'Windows 11 Home']
+  const manufacturers = ['AMD', 'DeepCool', 'G.Skill', 'MSI', 'NVIDIA', 'Samsung', 'Corsair', 'Fractal Design', 'Noctua', 'Microsoft']
+  const items = mainCategories.map((category, index) => ({
     id: `item-${category.id}`, kind: 'catalog', category: category.id, product: { ...makeProduct(category.id, names[index]), manufacturer: manufacturers[index] },
     price: 10000, quantity: 1, source: 'buy', memo: '削除対象の旧メモ',
   }))
@@ -860,11 +1103,11 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
   await page.goto('/')
   const sheet = page.getByRole('region', { name: '構成パーツ', exact: true })
   const rows = sheet.locator('.build-item')
-  await expect(rows).toHaveCount(9)
-  await expect(page.locator('.summary-total dd')).toHaveText('￥90,000')
+  await expect(rows).toHaveCount(10)
+  await expect(page.locator('.summary-total dd')).toHaveText('￥100,000')
   await expect(page.getByText(/メモを|旧メモ/)).toHaveCount(0)
   await expect(page.locator('textarea')).toHaveCount(0)
-  for (const category of partCategories) {
+  for (const category of mainCategories) {
     const section = page.getByRole('region', { name: category.label, exact: true })
     await expect(section.getByRole('button', { name: `${category.label}を追加`, exact: true })).toHaveCount(category.cardinality === 'multiple' ? 1 : 0)
     await expect(section.getByRole('button', { name: `${category.label}を選択`, exact: true })).toHaveCount(0)
@@ -931,7 +1174,7 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
   await page.route(`${api}/v1/search?**`, (route) => route.fulfill({ json: searchResponse(route.request().url(), [extra]) }))
   await page.getByRole('button', { name: 'ストレージを追加', exact: true }).click()
   await page.getByRole('button', { name: `${extra.name}を構成に追加`, exact: true }).click()
-  await expect(rows).toHaveCount(10)
+  await expect(rows).toHaveCount(11)
   expect((await sheet.boundingBox())!.height - before).toBeLessThanOrEqual(isMobile ? 135 : 60)
   await page.screenshot({ path: testInfo.outputPath('multiple-storage-sheet.png'), fullPage: true })
   const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('pc-build-sheet:build')!) as { version: number; state: { items: unknown[] } })

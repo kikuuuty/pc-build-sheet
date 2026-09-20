@@ -46,16 +46,17 @@ npm run test:live
 ```
 
 - 単体テスト：各行の価格合計、未入力/0円の区別、行数ベースの集計、価格入力の正規化と上限、部分更新のinvariant、カテゴリごとのsingle/multiple制約、製品置換と価格リセット、任意項目の追加・名前変更・削除、persist対象・復元・v1/v2/v3/v4→v5 migration・不正データ・保存障害。旧数量の行展開で金額・点数を保ち、IDが衝突しないことも検証します。既存のAPI schema・HTTP/通信エラー・中断・retry方針・スペック表示も検証します。
-- E2E：APIを固定レスポンスに置き換え、PC/モバイルで検索→追加→価格入力→0円入力→リロード→任意項目→削除、製品名からの置換、複数Storageの独立編集、旧データの0円変換・行展開と移行後の再編集、入力エラーを検証します。9カテゴリを埋めたシートの高さ、desktop列の整列、320px幅を含む操作要素の重なり・横スクロールも確認します。検索Dialogのdebounce・IME・pagination・0件・エラー・中断・フォーカス制御の既存テストを維持し、追加/置換両モードでpagination・中断・フォーカス復帰を検証しています。E2E/実APIテストは実行前に本番ビルドを作成し、PlaywrightがVite previewを起動・終了します。
-- `test:live`：カテゴリ一覧と既存9カテゴリの実レスポンスをschema検証します。ブラウザでCPU空欄一覧のcursorページ移動・前へ、`ryzen` のoffsetページ移動・前へ、`9800x3d` 検索 → 追加 → リロード → 削除まで確認します。ネットワークと公開APIの稼働状況に依存します。
+- E2E：APIを固定レスポンスに置き換え、PC/モバイルで検索→追加→価格入力→0円入力→リロード→任意項目→削除、製品名からの置換、複数Storageの独立編集、旧データの0円変換・行展開と移行後の再編集、入力エラーを検証します。主10カテゴリを埋めたシートの高さ、desktop列の整列、320px幅を含む操作要素の重なり・横スクロールも確認します。検索Dialogのdebounce・IME・pagination・0件・エラー・中断・フォーカス制御の既存テストを維持し、追加/置換両モードでpagination・中断・フォーカス復帰を検証しています。E2E/実APIテストは実行前に本番ビルドを作成し、PlaywrightがVite previewを起動・終了します。
+- `test:live`：カテゴリ一覧と全30カテゴリの実レスポンス・スペック要約を検証します。ブラウザでCPU空欄一覧のcursorページ移動・前へ、`ryzen` のoffsetページ移動・前へ、`9800x3d` 検索 → 追加 → リロード → 削除まで確認します。ネットワークと公開APIの稼働状況に依存します。
 - スクリーンショット・失敗時traceは `test-results/` に出力します（Git対象外）。
+- 30カテゴリ対応：registryとProductionカテゴリ一覧の一致、optional 20カテゴリのGET検索・typed/空spec・null要約、全30カテゴリの保存復元、v1〜5の旧主9カテゴリ保持を単体テストします。E2Eでは追加候補13カテゴリの検索→追加→置換→リロード→削除、候補の非表示/再表示、multipleの複数行、フォーカス復帰をdesktop/mobileで検証します。OSの常設・single制約・追加/置換/削除・既存v5保存データの復元、4グループの表示と空グループの非表示、候補から除外した7カテゴリの保存データ復元・削除も確認します。
 - GitHub Actions（`.github/workflows/ci.yml`）：PRとmainへのpushでNode.js 24上の `npm ci` → lint → typecheck → unit test → production build → Playwright Chromiumセットアップ → desktop/mobile E2Eを実行します。通常CIは公開APIに依存せず、`test:live` は含めません。
 
 ## APIとの接続
 
 **pc-parts-catalog**：<https://pc-parts-catalog.kikuuuty.workers.dev>
 
-- `GET /v1/categories`：API側の30カテゴリと将来追加される非空のカテゴリIDを受け入れます。UIは `src/domain/categories.ts` の既存9カテゴリを維持し、選択カテゴリがAPI一覧に存在することを確認してから検索します。
+- `GET /v1/categories`：API側の30カテゴリと将来追加される非空のカテゴリIDを受け入れます。UIは `src/domain/categories.ts` の30カテゴリを扱い、選択カテゴリがAPI一覧に存在することを確認してから検索します。
 - 検索語あり：`GET /v1/search?category=cpu&q=9800x3d&limit=20&offset=0`。続きは `meta.next_offset`、前へは使用済みoffsetの履歴を使用します。`next_cursor` はnull、検索windowは1000件です。
 - 検索語なし：`GET /v1/search?category=cpu&limit=20`。続きは `cursor=meta.next_cursor`、前へは使用済みcursor（初回は省略）の履歴を使用します。`q` / `offset` は送信しません。`window_limit` / `next_offset` はnull、レスポンスの `offset` は全ページ0です。
 - `SearchParams` とDialogのpagination状態はkeyword/listingの判別可能なunionです。cursorは不透明な値として扱い、検索語変更時に履歴を初期化します。
@@ -73,9 +74,9 @@ npm run test:live
 - [追加カテゴリのspec型](https://github.com/kikuuuty/pc-parts-catalog/blob/main/src/extended-models.js)
 - [Pagination契約](https://github.com/kikuuuty/pc-parts-catalog/blob/main/docs/pagination.md)
 
-`CatalogProduct` は既存9カテゴリで判別できるZod schemaから型を導出しています。既存9カテゴリのspec型はBackendと一致し、未知の追加フィールドは除去、既知の欠損spec値は `null` として扱います。HTTP製品schemaは `source` を必須とし、以前の保存済み製品はsourceなしでも復元できます（保存versionは5を維持）。製品参照には `source` とカテゴリを含む `upstream_key` を保持します。APIのDB内部IDやUUID単体を恒久的な製品識別子として扱いません。
+`CatalogProduct` は30カテゴリのZod discriminated unionから型を導出しています。既存9カテゴリに加え、モニター・キーボード・マウス・ヘッドホン・Webカメラのtyped scalar specをBackendに合わせて検証します。それ以外はregistryから空specの分岐を生成します。未知の追加フィールドは除去し、既知のspecは `null` を許容しますが、フィールド自体の欠落や型違いは拒否します。HTTP製品schemaは `source` を必須とし、以前の保存済み製品はsourceなしでも復元できます（保存versionは5を維持）。製品参照には `source` とカテゴリを含む `upstream_key` を保持します。APIのDB内部IDやUUID単体を恒久的な製品識別子として扱いません。
 
-将来30カテゴリをUIへ追加する際は、`extended-models.js` に対応する製品schemaのunion分岐、`PartCategory`・表示名・表示順・追加制約、スペック要約、Store/保存データの対応とテストを拡張する必要があります。今回のカテゴリ一覧schemaはUIカテゴリ定義に依存しませんが、製品検索・構成シートは引き続き既存9カテゴリが対象です。
+2026-09-20に `src/model.js` / `src/extended-models.js` / README / API文書を再確認し、全30カテゴリに対応しました。通常のGET検索に含まれない接続方式などのfacetsは推測せず、取得できたscalar specだけを要約します。specが空のカテゴリもメーカー名・製品名で検索・選択・保存できます。
 
 ## 主な構成
 
@@ -83,7 +84,7 @@ npm run test:live
 src/
   api/catalog/        client・Zod schemas・型・Query hooks
   components/         共通Dialog・出典表記
-  domain/             9カテゴリ定義・主要スペックの表示変換・共通円フォーマット
+  domain/             30カテゴリregistry・主要スペックの表示変換・共通円フォーマット
   features/
     build/            高密度シート・行内編集・任意項目名Dialog・サマリー・計算・schema/migration・store
     search/           検索Dialog・debounce・検索状態表示
@@ -107,18 +108,27 @@ type BuildItem =
   | (EditableFields & { id: string; kind: 'custom'; name: string })
 ```
 
-各Itemに独立したIDを持ち、1行＝1商品として扱います。ユーザーの価格を `CatalogProduct` へ書き込みません。任意項目に偽のカタログ製品や既存9カテゴリを割り当てません。費用のかからないパーツは価格0円で登録できます。
+各Itemに独立したIDを持ち、1行＝1商品として扱います。ユーザーの価格を `CatalogProduct` へ書き込みません。任意項目に偽のカタログ製品やカタログカテゴリを割り当てません。費用のかからないパーツは価格0円で登録できます。
 
 Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（価格の更新）/ `renameCustomItem` / `removeItem` / `clearBuild`。編集actionはZod検証後に更新し、不正な更新はまとめて拒否します。ID・kind・製品・カテゴリは部分更新の対象外です。旧 `quantity` の追加・更新も拒否します。
 
 ### カテゴリと製品変更
 
-`src/domain/categories.ts` の `cardinality` がUIとStore共通の定義です。
+`src/domain/categories.ts` のregistryがID・日本語ラベル・表示順・`placement`（main/optional）・`cardinality`（single/multiple）・`additionGroup`（追加候補のグループ）の唯一の定義です。`PartCategory` と保存用enum、main/optional一覧、追加候補一覧をここから導出します。中カテゴリの名前と順序も同ファイルの `additionGroups` で管理します。
+
+- 主カテゴリはCPU → CPUクーラー → メモリ → マザーボード → GPU → ストレージ → 電源 → ケース → ケースファン → OSの順に10カテゴリを常設します。OSは未選択でもエラーにせず、削除すると空のOS行に戻ります。
+- optionalのうち13カテゴリは構成サマリーの下の「製品を追加」ボタンから共通の検索Dialogを開きます。選択後だけ、主カテゴリの下にregistry順でセクションを表示します。
+- 追加候補は「拡張カード」（キャプチャーカード・ネットワークカード・サウンドカード）→「周辺機器」（モニター・キーボード・マウス・マウスパッド）→「音声・映像機器」（ヘッドホン・スピーカー・マイク・Webカメラ）→「その他」（サーマルペースト・アクセサリー）の順の4グループです。各グループ内は等幅2列、高さ34pxのコンパクトなボタンで揃えます。候補がなくなったグループは隠し、すべて選択済みならその旨を表示します。
+- ノートPC・完成品PC・デスク・チェア・VRヘッドセット・照明・スタンドは `additionGroup: null` として追加候補から除外します。30カテゴリのAPI型・保存schemaは維持し、既存データは引き続き表示・削除できます。除外カテゴリは削除後も候補へ戻しません。
+- PCでは左に構成シート、右に構成サマリーと「製品を追加」を縦に配置します。幅1100px以下ではシート → サマリー → 製品を追加の順です。
+- 「その他」の任意項目入力欄は廃止しました。既存の保存データに任意項目がある場合だけ、シート末尾に「保存済みの任意項目」を表示し、名前・価格の編集と削除ができます。
+- OSは主カテゴリのsingleです。optionalのsingleはチェア・デスク・ノートPC・完成品PC・VRヘッドセット（すべて新規カテゴリ候補から除外済み）。追加候補13カテゴリはすべてmultipleです。
+- single/multipleともに選択後は「製品を追加」の候補を隠し、最後の製品を削除すると候補とフォーカスを戻します。multipleの2件目以降はカテゴリ行の「追加」から同じセクション内に追加します。
 
 | 追加制約 | カテゴリ | 操作 |
 | --- | --- | --- |
-| single | CPU、CPUクーラー、マザーボード、GPU、電源、ケース | 空欄で「選択」。選択後は追加ボタンなし。製品名から置換 |
-| multiple | メモリ、ストレージ、ケースファン、その他/任意項目 | 選択後もカテゴリヘッダー右側に「＋ 追加」。同じ製品も複数追加可能 |
+| single | CPU、CPUクーラー、マザーボード、GPU、電源、ケース、OS、singleのoptional | 空欄で選択。選択後は追加ボタンなし。製品名から置換 |
+| multiple | メモリ、ストレージ、ケースファン、multipleのoptional | 選択後もカテゴリヘッダー右側に「＋ 追加」。同じ製品も複数追加可能 |
 
 - カタログ製品名（スペックと余白を含む表示領域）のクリック/Enter/Spaceで、同じ中央配置検索Dialogを**置換モード**で開きます。追加と置換は検索結果ボタン・Store actionを区別します。
 - `replaceItem(id, product)` は同じカテゴリのカタログ製品のみを受け付け、**IDを保持し、priceを必ず `null` へリセット**します。明示的に同じ製品を選び直した場合も価格をリセットします。他の行には影響しません。
@@ -129,6 +139,8 @@ Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（�
 ### 保存schema / migration
 
 - 保存キー：`pc-build-sheet:build`、**schema version：`5`**。保存対象は `items` のみで、検索結果・モーダル状態・入力途中のdraft・actionsは保存しません。category cardinalityは静的なUI/Store設定で、保存データには含めません。
+- 30カテゴリ対応は許容カテゴリを増やすだけで保存形式を変更しないため、versionを上げず追加migrationも不要です。v1〜4の既存migrationとv5の直接復元を維持します。optionalの表示セクションは復元したitemsから導出します。
+- OSの主カテゴリ化も表示設定だけの変更です。カテゴリID `os`・製品・価格・行IDを保持し、以前optionalとして保存したOSを常設行に復元します。保存versionは5のままです。
 - **version 1 → 5**：`checkedStorage` で旧形式を検証し、Zustand persistの `migrate` で `kind: 'catalog'` を補完します。
 - **version 1 / 2 / 3 → 5 共通**：旧購入/流用フィールド `source` と旧 `memo` を除去します。流用品（`source === 'owned'`）の価格は、元の値が金額・0・nullのいずれでも **0円へ変換**します。購入扱いの価格は0/nullを含めて維持します。
 - **version 1 / 2 / 3 / 4 → 5 共通**：旧 `quantity`（1〜99）を検証し、その数だけ同じ商品・価格の行へ展開してフィールドを除去します。各元行の最初の行は元のIDを保持し、追加行には既存IDと衝突しないIDを付け、直後に並べます。カタログ/任意項目ともに製品/名前、合計金額・パーツ数・価格未入力数を引き継ぎます。version 5形式で保存し直し、再読込で二重展開しません。移行後の価格編集・置換・削除は各行に独立して適用します。
@@ -159,14 +171,14 @@ Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（�
 
 ## 現在の機能
 
-- 9カテゴリを常時表示する構成シート。広いPC画面はシート＋サマリーの2カラム、幅1100px以下ではシート幅を優先してサマリーを下に配置
+- OSを含む主カテゴリ10個を常時表示し、4グループのoptional 13カテゴリを必要に応じて追加できる構成シート。広いPC画面はシート＋サマリーの2カラム、幅1100px以下ではシート幅を優先してサマリーを下に配置
 - 各カテゴリ共通の中央配置wide modal、基本検索、ページ移動、主要スペック表示
   - PC：幅最大900px・高さ85dvh。モバイル（幅700px以下）：四辺に12pxの余白を残すほぼ全画面表示。タイトル・検索欄を上部に残し、結果領域だけをスクロールします。
   - 共通 `Dialog` は用途を明示する `variant="wide" | "confirm" | "edit"` を必須指定。検索は追加/置換共通の `ProductSearchDialog`、構成リセットは小型confirm、任意項目名は小型editを使用します。
 - desktop：列見出しを上部に一度だけ表示し、製品名（主要スペックは小さな2行目）・価格・削除を共通CSS Gridで横一列に配置。空カテゴリ約70px、1製品入り約75px、multipleの追加1行約46pxを目安にしています。長い製品名/specは省略表示し、titleとアクセシブル名で全文を確認できます。
 - 幅800px以下：製品名と削除ボタンを上段、価格を下段の右側に配置。320px幅でも操作領域の重なりと横スクロールを防ぎます。モバイルの製品名は最大2行です。
-- 「その他」セクションの「任意項目を入力」からOS・ケーブル・アクセサリ等を追加。名前を入力した後、共通のシート行で価格を編集できます。2件目以降は「＋追加」から登録します。
-- パーツ/任意項目の追加・個別削除・構成リセット、ブラウザへの自動保存
+- OSは構成シートの常設行から選択し、拡張カード・周辺機器などは構成サマリーの下の「製品を追加」から検索して追加。任意項目の新規入力UIはなく、保存済みの任意項目だけ編集・削除できます。
+- パーツの追加・個別削除・構成リセット、ブラウザへの自動保存
 - 見積もり合計・パーツ数・価格未入力数。サマリー変更の読み上げと、Item別の価格入力ラベル
 - 検索中・入力待ち・0件・APIエラー・保存障害の表示
 - キーボード操作、Escape・backdropクリックで閉じる、モーダル内フォーカス制御と終了時の復帰。文字選択のドラッグが背景へ抜けても閉じません。

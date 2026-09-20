@@ -3,9 +3,27 @@ import fixture from '../../test/fixtures/cpu-search.json'
 import listing from '../../test/fixtures/cpu-listing.json'
 import categories from '../../test/fixtures/categories.json'
 import { catalogProductSchema, categoriesResponseSchema, searchResponseSchema } from './schemas'
-import { partCategories } from '../../domain/categories'
+import { optionalCategories, partCategories } from '../../domain/categories'
+import { extendedSpecs, optionalProduct } from '../../test/optional-products'
 
 describe('catalog response boundary', () => {
+  it.each(optionalCategories)('parses GET search responses for $id, including null or empty specs', ({ id }) => {
+    const product = optionalProduct(id)
+    const result = searchResponseSchema.parse({ ...fixture, data: [product] })
+    expect(result.data[0]).toEqual(product)
+    const nullSpecs = Object.fromEntries(Object.keys(product.specs).map((key) => [key, null]))
+    expect(catalogProductSchema.parse({ ...product, specs: nullSpecs }).specs).toEqual(nullSpecs)
+    expect(catalogProductSchema.safeParse({ ...product, specs: null }).success).toBe(false)
+  })
+
+  it.each(Object.keys(extendedSpecs) as (keyof typeof extendedSpecs)[])('rejects missing and incorrectly typed scalar specs in %s', (category) => {
+    const product = optionalProduct(category)
+    for (const key of Object.keys(product.specs)) {
+      expect(catalogProductSchema.safeParse({ ...product, specs: { ...product.specs, [key]: undefined } }).success).toBe(false)
+      expect(catalogProductSchema.safeParse({ ...product, specs: { ...product.specs, [key]: [] } }).success).toBe(false)
+    }
+  })
+
   it('accepts the captured production 9800x3d response', () => {
     const result = searchResponseSchema.parse(fixture)
     expect(result.data[0].upstream_key).toBe('CPU/7ab840c3-8c52-4ced-a65c-7b0922ca479e')
@@ -70,7 +88,7 @@ describe('catalog response boundary', () => {
   })
 
   it('validates category responses independently of display ordering', () => {
-    expect(categoriesResponseSchema.parse({ categories: partCategories.map(({ id }) => id).reverse() }).categories).toHaveLength(9)
+    expect(categoriesResponseSchema.parse({ categories: partCategories.map(({ id }) => id).reverse() }).categories).toHaveLength(30)
     const result = categoriesResponseSchema.parse(categories)
     expect(result.categories).toHaveLength(30)
     for (const { id } of partCategories) expect(result.categories.includes(id)).toBe(true)

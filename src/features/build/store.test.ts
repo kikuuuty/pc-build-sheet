@@ -4,7 +4,8 @@ import fixture from '../../test/fixtures/cpu-search.json'
 import { catalogProductSchema } from '../../api/catalog/schemas'
 import { BUILD_STORAGE_KEY, BUILD_STORAGE_VERSION, createBuildStore } from './store'
 import { MAX_NAME_LENGTH, MAX_PRICE, type ItemChanges } from './schemas'
-import { partCategories } from '../../domain/categories'
+import { mainCategories, optionalCategories, partCategories } from '../../domain/categories'
+import { optionalProduct } from '../../test/optional-products'
 import { getBuildSummary } from './totals'
 
 const product = catalogProductSchema.parse(fixture.data[0])
@@ -30,6 +31,58 @@ async function setup(storage: StateStorage) {
 }
 
 describe('build state and persistence', () => {
+  it.each([1, 2, 3, 4, 5])('loads all nine main categories from v%i with IDs, products and prices intact', async (version) => {
+    const { storage, data } = memoryStorage()
+    const items = mainCategories.filter(({ id }) => id !== 'os').map(({ id }, index) => {
+      const variant = catalogProductSchema.options.find((option) => option.shape.category.value === id)!
+      const specs = Object.fromEntries(Object.keys(variant.shape.specs.shape).map((key) => [key, null]))
+      return { id: `legacy-${id}`, kind: 'catalog', category: id,
+        product: catalogProductSchema.parse({ ...product, category: id, specs }), price: index === 0 ? null : index * 1000 }
+    })
+    data.set(BUILD_STORAGE_KEY, JSON.stringify({ version, state: { items: items.map((item) => ({
+      ...item, kind: version === 1 ? undefined : item.kind,
+      ...(version < 5 ? { quantity: 1 } : {}), ...(version < 4 ? { source: 'buy', memo: '旧メモ' } : {}),
+    })) } }))
+    const { store, report } = await setup(storage)
+    expect(store.getState().items).toEqual(items)
+    expect(report).not.toHaveBeenCalledWith(expect.any(String))
+    const { store: restored } = await setup(storage)
+    expect(restored.getState().items).toEqual(items)
+  })
+
+  it('persists and restores all 30 categories alongside custom items without losing references or prices', async () => {
+    const { storage } = memoryStorage()
+    const { store } = await setup(storage)
+    for (const { id } of partCategories) {
+      const variant = catalogProductSchema.options.find((option) => option.shape.category.value === id)!
+      const specs = Object.fromEntries(Object.keys(variant.shape.specs.shape).map((key) => [key, null]))
+      expect(store.getState().addItem(catalogProductSchema.parse({ ...product, category: id, specs }))).toBe(true)
+    }
+    store.getState().addCustomItem({ name: '任意のケーブル', price: 0 })
+    for (const [index, item] of store.getState().items.entries()) store.getState().updateItem(item.id, { price: index * 100 })
+    const { store: restored, report } = await setup(storage)
+    expect(restored.getState().items).toHaveLength(31)
+    expect(restored.getState().items).toEqual(store.getState().items)
+    expect(report).not.toHaveBeenCalled()
+  })
+
+  it.each(optionalCategories)('adds, replaces and removes $id while preserving other items', async ({ id, cardinality }) => {
+    const { store } = await setup(memoryStorage().storage)
+    const candidate = catalogProductSchema.parse(optionalProduct(id))
+    store.getState().addItem(product)
+    const cpu = store.getState().items[0]
+    expect(store.getState().addItem(candidate)).toBe(true)
+    const added = store.getState().items[1]
+    expect(store.getState().addItem(candidate)).toBe(cardinality === 'multiple')
+    store.getState().updateItem(added.id, { price: 10000 })
+    const replacement = { ...candidate, name: 'Replacement', upstream_key: `${id}/replacement` }
+    expect(store.getState().replaceItem(added.id, replacement)).toBe(true)
+    expect(store.getState().items[1]).toEqual({ ...added, product: replacement, price: null })
+    for (const item of store.getState().items.slice(1)) store.getState().removeItem(item.id)
+    expect(store.getState().items).toEqual([cpu])
+    expect(store.getState().addItem(candidate)).toBe(true)
+  })
+
   it('adds independent build items, including two of the same product', async () => {
     const { storage } = memoryStorage()
     const { store } = await setup(storage)

@@ -1,15 +1,19 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type RefObject } from 'react'
 import { Plus } from 'lucide-react'
-import { customCategory, partCategories, type CategoryDefinition } from '../../domain/categories'
+import { customCategory, mainCategories, optionalCategories, type CategoryDefinition } from '../../domain/categories'
 import type { SearchRequest } from '../search/ProductSearchDialog'
 import { useBuildStore } from './store'
 import type { BuildItem } from './schemas'
 import { BuildItemRow } from './BuildItemRow'
-import { CustomItemDialog } from './CustomItemDialog'
+import type { OptionalCategoryFocus } from './category-focus'
 
-export function BuildSheet({ onSearch }: { onSearch: (request: SearchRequest) => void }) {
+export function BuildSheet({ onSearch, optionalRefs }: {
+  onSearch: (request: SearchRequest) => void; optionalRefs: OptionalCategoryFocus
+}) {
   const items = useBuildStore((state) => state.items)
   const [announcement, setAnnouncement] = useState('')
+  const selectedCategories = new Set(items.flatMap((item) => item.kind === 'catalog' ? [item.category] : []))
+  const savedCustomItems = items.filter((item) => item.kind === 'custom')
 
   return (
     <section className="sheet" aria-labelledby="sheet-title">
@@ -21,26 +25,34 @@ export function BuildSheet({ onSearch }: { onSearch: (request: SearchRequest) =>
         <span>パーツ</span><span className="number-column">価格</span><span />
       </div>
       <div className="category-list">
-        {partCategories.map((category, index) => (
+        {mainCategories.map((category, index) => (
           <CategorySection key={category.id} category={category} index={index + 1}
             items={items.filter((item) => item.kind === 'catalog' && item.category === category.id)}
             onSearch={onSearch} onAnnounce={setAnnouncement} />
         ))}
-        <CategorySection category={customCategory} items={items.filter((item) => item.kind === 'custom')} onSearch={onSearch} onAnnounce={setAnnouncement} />
+        {optionalCategories.filter(({ id }) => selectedCategories.has(id)).map((category) => (
+          <CategorySection key={category.id} category={category}
+            items={items.filter((item) => item.kind === 'catalog' && item.category === category.id)}
+            productRef={optionalRefs.get(category.id)!.product} emptyFocusRef={optionalRefs.get(category.id)!.add}
+            onSearch={onSearch} onAnnounce={setAnnouncement} />
+        ))}
+        {savedCustomItems.length > 0 && <CategorySection category={customCategory} items={savedCustomItems}
+          onSearch={onSearch} onAnnounce={setAnnouncement} />}
       </div>
       <div className="sr-only" role="status">{announcement}</div>
     </section>
   )
 }
 
-function CategorySection({ category, index, items, onSearch, onAnnounce }: {
+function CategorySection({ category, index, items, productRef, emptyFocusRef, onSearch, onAnnounce }: {
   category: CategoryDefinition | typeof customCategory; index?: number; items: BuildItem[]
+  productRef?: RefObject<HTMLButtonElement | null>; emptyFocusRef?: RefObject<HTMLButtonElement | null>
   onSearch: (request: SearchRequest) => void; onAnnounce: (message: string) => void
 }) {
   const addRef = useRef<HTMLButtonElement>(null)
-  const firstItemRef = useRef<HTMLButtonElement>(null)
+  const ownFirstItemRef = useRef<HTMLButtonElement>(null)
+  const firstItemRef = productRef ?? ownFirstItemRef
   const sectionRef = useRef<HTMLElement>(null)
-  const [addingCustom, setAddingCustom] = useState(false)
   const removeItem = useBuildStore((state) => state.removeItem)
   const selected = items.length > 0
   const canAdd = category.cardinality === 'multiple'
@@ -48,12 +60,10 @@ function CategorySection({ category, index, items, onSearch, onAnnounce }: {
     <section ref={sectionRef} className={`category-row${selected ? ' has-items' : ''}`} aria-labelledby={`category-${category.id}`}>
       <div className="category-header">
         <h3 id={`category-${category.id}`}><span className="category-number" aria-hidden="true">{index ? String(index).padStart(2, '0') : '＋'}</span>{category.label}</h3>
-        {(!selected || canAdd) && <button ref={addRef} type="button" className={selected ? 'add-another' : 'select-part'} aria-haspopup="dialog"
-          aria-label={category.id === 'custom' ? '任意項目を追加' : `${category.label}を${selected ? '追加' : '選択'}`}
-          onClick={() => {
-            if (category.id === 'custom') setAddingCustom(true)
-            else onSearch({ category, target: { mode: 'add' }, returnFocus: category.cardinality === 'single' ? firstItemRef : addRef })
-          }}>{selected ? <><Plus size={14} aria-hidden="true" />追加</> : <><span aria-hidden="true">—</span>{category.id === 'custom' ? '任意項目を入力' : 'パーツを選択'}</>}</button>}
+        {category.id !== 'custom' && (!selected || canAdd) && <button ref={addRef} type="button" className={selected ? 'add-another' : 'select-part'} aria-haspopup="dialog"
+          aria-label={`${category.label}を${selected ? '追加' : '選択'}`}
+          onClick={() => onSearch({ category, target: { mode: 'add' }, returnFocus: category.cardinality === 'single' ? firstItemRef : addRef })}
+          >{selected ? <><Plus size={14} aria-hidden="true" />追加</> : <><span aria-hidden="true">—</span>パーツを選択</>}</button>}
       </div>
       {selected && <ul className="build-items">
         {items.map((item, index) => <BuildItemRow key={item.id} item={item} productRef={index === 0 ? firstItemRef : undefined}
@@ -62,12 +72,12 @@ function CategorySection({ category, index, items, onSearch, onAnnounce }: {
             onAnnounce(`${item.kind === 'catalog' ? item.product.name : item.name}を構成から削除しました`)
             // The empty-category opener may be mounted by this update; focus after the render.
             requestAnimationFrame(() => {
-              const target = sectionRef.current?.querySelector<HTMLButtonElement>('.product-selector') ?? addRef.current
+              const target = sectionRef.current?.querySelector<HTMLButtonElement>('.product-selector') ?? addRef.current ?? emptyFocusRef?.current
+                ?? document.querySelector<HTMLButtonElement>('.select-part')
               target?.focus()
             })
           }} />)}
       </ul>}
-      {addingCustom && <CustomItemDialog onClose={() => setAddingCustom(false)} onSaved={(name) => onAnnounce(`${name}を構成に追加しました`)} />}
     </section>
   )
 }

@@ -10,6 +10,7 @@ import {
 } from './schemas'
 
 export const BUILD_STORAGE_KEY = 'pc-build-sheet:build'
+// The 30-category registry widens validation only; the v5 item/envelope format is unchanged.
 export const BUILD_STORAGE_VERSION = 5
 
 type BuildState = {

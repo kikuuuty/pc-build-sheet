@@ -1,10 +1,10 @@
 import type { CatalogProduct } from '../api/catalog/types'
 
-const unit = (value: number | null, suffix: string) => value === null ? null : `${value}${suffix}`
+const unit = (value: number | null | undefined, suffix: string) => typeof value === 'number' && Number.isFinite(value) ? `${value}${suffix}` : null
 
 // A compact display projection, separate from the catalog and build models.
 export function productSpecSummary(product: CatalogProduct): string {
-  let values: (string | null)[]
+  let values: (string | null | undefined)[] = []
   switch (product.category) {
     case 'cpu':
       values = [product.specs.socket, unit(product.specs.core_count, 'コア'), unit(product.specs.thread_count, 'スレッド')]
@@ -34,6 +34,24 @@ export function productSpecSummary(product: CatalogProduct): string {
     case 'case_fan':
       values = [unit(product.specs.size_mm, 'mm'), product.specs.pwm === 1 ? 'PWM' : null, unit(product.specs.quantity, '個入り')]
       break
+    case 'monitor':
+      values = [unit(product.specs.screen_size_inches, 'インチ'),
+        product.specs.resolution_width != null && product.specs.resolution_height != null
+          ? `${product.specs.resolution_width}×${product.specs.resolution_height}` : null,
+        unit(product.specs.refresh_rate_hz, 'Hz')]
+      break
+    case 'keyboard':
+      values = [product.specs.size, product.specs.switch_type, product.specs.layout]
+      break
+    case 'mouse':
+      values = [product.specs.shape, unit(product.specs.weight_g, 'g'), unit(product.specs.polling_rate_hz, 'Hz')]
+      break
+    case 'headphones':
+      values = [product.specs.headphone_type, product.specs.ear_cup_type]
+      break
+    case 'webcam':
+      values = [product.specs.resolution, unit(product.specs.frame_rate_fps, 'fps')]
+      break
   }
-  return values.filter((value) => value !== null && value.trim() !== '').join(' / ')
+  return values.filter((value) => typeof value === 'string' && value.trim() !== '').join(' / ')
 }

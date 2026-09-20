@@ -3,6 +3,8 @@ import { Check, Monitor, AlertCircle } from 'lucide-react'
 import { Attribution } from './components/Attribution'
 import { BuildSheet } from './features/build/BuildSheet'
 import { BuildSummary } from './features/build/BuildSummary'
+import { ProductAdditionPanel } from './features/build/ProductAdditionPanel'
+import { useOptionalCategoryFocus } from './features/build/category-focus'
 import { usePersistenceStatus } from './features/build/store'
 import { ProductSearchDialog, type SearchRequest } from './features/search/ProductSearchDialog'
 
@@ -10,6 +12,7 @@ export function App() {
   const [search, setSearch] = useState<SearchRequest | null>(null)
   const [announcement, setAnnouncement] = useState('')
   const persistenceIssue = usePersistenceStatus((state) => state.issue)
+  const optionalRefs = useOptionalCategoryFocus()
 
   return (
     <>
@@ -22,7 +25,13 @@ export function App() {
       <main className="app-main">
         <div className="page-heading"><div><p className="eyebrow">BUILD SHEET</p><h2>マイ構成</h2></div><p>ひとつずつ選んで、理想の1台に。</p></div>
         {persistenceIssue && <p className="storage-warning" role="alert">{persistenceIssue}</p>}
-        <div className="workspace"><BuildSheet onSearch={setSearch} /><BuildSummary /></div>
+        <div className="workspace">
+          <BuildSheet onSearch={setSearch} optionalRefs={optionalRefs} />
+          <div className="workspace-sidebar">
+            <BuildSummary />
+            <ProductAdditionPanel onSearch={setSearch} optionalRefs={optionalRefs} />
+          </div>
+        </div>
         <footer className="app-footer"><span>自作PC構成シート</span><Attribution /></footer>
       </main>
       <div className="sr-only" role="status">{announcement}</div>

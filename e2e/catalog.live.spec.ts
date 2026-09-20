@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { categoriesResponseSchema, searchResponseSchema } from '../src/api/catalog/schemas'
 import { partCategories } from '../src/domain/categories'
 import { CATALOG_BASE_URL } from '../src/api/catalog/client'
+import { productSpecSummary } from '../src/domain/product-summary'
 
-test('production API: categories and all nine product contracts', async ({ request }) => {
+test('production API: categories and all 30 product contracts', async ({ request }) => {
   // Explicitly opt-in via npm run test:live; ordinary tests do not depend on production.
   const categoriesResponse = await request.get(`${CATALOG_BASE_URL}/v1/categories`)
   expect(categoriesResponse.status()).toBe(200)
@@ -11,11 +13,22 @@ test('production API: categories and all nine product contracts', async ({ reque
   expect(categories.length).toBeGreaterThanOrEqual(30)
   for (const category of partCategories) {
     expect(categories).toContain(category.id)
-    const response = await request.get(`${CATALOG_BASE_URL}/v1/search?category=${category.id}&limit=20`)
+    // Thirty sequential probes must respect Production's admission budget.
+    await delay(1000)
+    const url = `${CATALOG_BASE_URL}/v1/search?category=${category.id}&limit=20`
+    let response = await request.get(url)
+    if (response.status() === 429) {
+      const retryAfter = Number(response.headers()['retry-after'])
+      if (Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter <= 60) {
+        await delay(retryAfter * 1000)
+        response = await request.get(url)
+      }
+    }
     expect(response.status(), category.id).toBe(200)
     const result = searchResponseSchema.parse(await response.json())
     expect(result.data.length, category.id).toBeGreaterThan(0)
     expect(result.data.every((product) => product.category === category.id)).toBe(true)
+    for (const product of result.data) expect(typeof productSpecSummary(product)).toBe('string')
     expect(result.meta).toMatchObject({ offset: 0, next_offset: null, window_limit: null, window_exhausted: false })
   }
 })
