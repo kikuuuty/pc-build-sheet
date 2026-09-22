@@ -1,13 +1,17 @@
 import type { CatalogProduct } from '../api/catalog/types'
 
 const unit = (value: number | null | undefined, suffix: string) => typeof value === 'number' && Number.isFinite(value) ? `${value}${suffix}` : null
+const tdp = (value: number | null | undefined) => {
+  const watts = unit(value, 'W')
+  return watts === null ? null : `TDP ${watts}`
+}
 
 // A compact display projection, separate from the catalog and build models.
 export function productSpecSummary(product: CatalogProduct): string {
   let values: (string | null | undefined)[] = []
   switch (product.category) {
     case 'cpu':
-      values = [product.specs.socket, unit(product.specs.core_count, 'コア'), unit(product.specs.thread_count, 'スレッド')]
+      values = [product.specs.socket, unit(product.specs.core_count, 'コア'), unit(product.specs.thread_count, 'スレッド'), tdp(product.specs.tdp_w)]
       break
     case 'cpu_cooler':
       values = [product.specs.water_cooled === null ? null : product.specs.water_cooled === 1 ? '水冷' : '空冷',
@@ -20,7 +24,7 @@ export function productSpecSummary(product: CatalogProduct): string {
       values = [product.specs.ram_type, unit(product.specs.capacity_gb, 'GB'), unit(product.specs.kit_quantity, '枚組')]
       break
     case 'gpu':
-      values = [product.specs.chipset, unit(product.specs.vram_gb, 'GB'), product.specs.memory_type]
+      values = [product.specs.chipset, unit(product.specs.vram_gb, 'GB'), product.specs.memory_type, tdp(product.specs.tdp_w)]
       break
     case 'storage':
       values = [product.specs.storage_type, unit(product.specs.capacity_gb, 'GB'), product.specs.form_factor]

@@ -7,9 +7,9 @@ import { optionalProduct } from '../test/optional-products'
 
 it('formats real specs without estimating power or showing null values', () => {
   const product = catalogProductSchema.parse(fixture.data[0])
-  expect(productSpecSummary(product)).toBe('AM5 / 8コア / 16スレッド')
+  expect(productSpecSummary(product)).toBe('AM5 / 8コア / 16スレッド / TDP 120W')
   if (product.category !== 'cpu') throw new Error('Invalid fixture')
-  expect(productSpecSummary({ ...product, specs: { ...product.specs, socket: null, core_count: null, thread_count: null } })).toBe('')
+  expect(productSpecSummary({ ...product, specs: { ...product.specs, socket: null, core_count: null, thread_count: null, tdp_w: null } })).toBe('')
 })
 
 it.each(partCategories)('safely summarizes $id with all unknown specs', ({ id }) => {
