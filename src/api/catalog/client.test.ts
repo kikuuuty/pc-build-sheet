@@ -2,7 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import fixture from '../../test/fixtures/cpu-search.json'
 import listingFixture from '../../test/fixtures/cpu-listing.json'
 import categories from '../../test/fixtures/categories.json'
-import { CatalogError, catalogRetryDelay, getCategories, searchProducts, shouldRetryCatalogRequest } from './client'
+import { CatalogError, catalogRetryDelay, getCategories, getCategoryFilters, searchProducts, shouldRetryCatalogRequest } from './client'
+import { cpuFilters } from '../../test/filter-fixtures'
 import type { SearchParams } from './types'
 import { optionalCategories } from '../../domain/categories'
 import { optionalProduct } from '../../test/optional-products'
@@ -11,6 +12,38 @@ const listing = { ...listingFixture, meta: { ...listingFixture.meta, limit: 20 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('catalog client', () => {
+  it('fetches category metadata and rejects category mismatches', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(Response.json(cpuFilters)))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await getCategoryFilters('cpu')).toEqual(cpuFilters)
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/v1\/categories\/cpu\/filters$/)
+    await expect(getCategoryFilters('gpu')).rejects.toMatchObject({ kind: 'invalid-response' })
+  })
+
+  it('POSTs numeric zero, ranges and facets with offset/cursor in the body and propagates abort', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(Response.json(listing)).mockResolvedValueOnce(Response.json(fixture))
+    vi.stubGlobal('fetch', fetchMock)
+    const conditions = { filters: { includes_cooler: [0] }, ranges: { core_count: { min: 8 } } }
+    const controller = new AbortController()
+    await searchProducts({ category: 'cpu', mode: 'listing', cursor: 'opaque', conditions }, controller.signal)
+    expect(fetchMock.mock.calls[0][0]).toMatch(/\/v1\/search$/)
+    const options = fetchMock.mock.calls[0][1] as RequestInit
+    expect(options).toMatchObject({ method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' } })
+    expect(JSON.parse(options.body as string)).toEqual({ category: 'cpu', limit: 20, cursor: 'opaque', ...conditions })
+    controller.abort()
+    expect(options.signal?.aborted).toBe(true)
+    await searchProducts({ category: 'cpu', mode: 'keyword', query: ' ryzen ', conditions })
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body as string)).toEqual({ category: 'cpu', limit: 20, keyword: 'ryzen', offset: 0, ...conditions })
+  })
+
+  it('sends facet values without requiring include expansions', async () => {
+    const product = optionalProduct('keyboard')
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ...fixture, data: [product], meta: { ...fixture.meta, window_limit: null } }))
+    vi.stubGlobal('fetch', fetchMock)
+    await searchProducts({ category: 'keyboard', mode: 'listing', conditions: { facets: { connectivity: ['Bluetooth', 'Wired USB-C'] } } })
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body as string)).toEqual({ category: 'keyboard', limit: 20, facets: { connectivity: ['Bluetooth', 'Wired USB-C'] } })
+  })
+
   it.each(optionalCategories)('uses GET listing and keyword search for $id', async ({ id }) => {
     const product = optionalProduct(id)
     const fetchMock = vi.fn()

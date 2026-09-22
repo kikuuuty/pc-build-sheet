@@ -23,6 +23,7 @@ function makeProduct(category: PartCategory, name: string, index = 0) {
 
 async function mockCatalog(page: Page) {
   await page.route(`${api}/v1/categories`, (route) => route.fulfill({ json: categoriesFixture }))
+  await page.route(`${api}/v1/categories/*/filters`, (route) => route.fulfill({ json: { category: new URL(route.request().url()).pathname.split('/')[3], filters: [] } }))
   await page.route(`${api}/v1/search?**`, (route) => {
     const params = new URL(route.request().url()).searchParams
     const category = params.get('category') as PartCategory
@@ -582,7 +583,7 @@ test(`wide search dialog is centered, scrolls only results and supports search a
   const headingBox = await dialog.locator('.dialog-header').boundingBox()
   const inputBox = await input.boundingBox()
   const pageScroll = await page.evaluate(() => window.scrollY)
-  const results = dialog.locator('.search-body')
+  const results = dialog.locator(page.viewportSize()!.width <= 700 ? '.search-workspace' : '.search-body')
   await results.evaluate((element) => element.scrollTo({ top: element.scrollHeight }))
   expect(await results.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
   expect(await dialog.locator('.dialog-header').boundingBox()).toEqual(headingBox)
@@ -724,7 +725,7 @@ test('invalid API responses are an error rather than an empty catalog', async ({
 })
 
 for (const mode of ['add', 'replace'] as const) {
-test(`closing a pending ${mode} search aborts it and reopening starts with a clean search`, async ({ page }) => {
+test(`closing a pending ${mode} search aborts it and reopening restores the keyword`, async ({ page }) => {
   let pendingStarted = false
   const aborted: string[] = []
   page.on('requestfailed', (request) => aborted.push(request.url()))
@@ -748,7 +749,7 @@ test(`closing a pending ${mode} search aborts it and reopening starts with a cle
   await expect.poll(() => aborted.some((url) => url.includes('q=pending'))).toBe(true)
   await expect(opener).toBeFocused()
   await opener.click()
-  await expect(page.getByRole('dialog').getByRole('textbox')).toHaveValue('')
+  await expect(page.getByRole('dialog').getByRole('textbox')).toHaveValue('pending')
   await expect(page.getByRole('dialog').getByText(productName, { exact: true })).toBeVisible()
 })
 }

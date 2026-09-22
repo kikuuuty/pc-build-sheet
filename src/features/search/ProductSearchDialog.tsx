@@ -1,6 +1,6 @@
 import { useRef, useState, type RefObject } from 'react'
 import { Plus, Search, X, ChevronLeft, ChevronRight, ArrowLeftRight } from 'lucide-react'
-import { useCatalogCategories, useProductSearch } from '../../api/catalog/queries'
+import { useCatalogCategories, useCategoryFilters, useProductSearch } from '../../api/catalog/queries'
 import type { CategoryDefinition } from '../../domain/categories'
 import type { CatalogProduct } from '../../api/catalog/types'
 import { productSpecSummary } from '../../domain/product-summary'
@@ -9,6 +9,11 @@ import { Attribution } from '../../components/Attribution'
 import { useBuildStore } from '../build/store'
 import { SearchEmpty, SearchError, SearchLoading } from './SearchFeedback'
 import { useDebouncedValue } from './useDebouncedValue'
+import type { SearchConditions } from '../../api/catalog/filters'
+import { getUiFilters } from './filter-config'
+import { compileConditions, conditionTags, emptyDraft, useSearchSession } from './filter-state'
+import { FilterPanel } from './FilterPanel'
+import { FilterTags } from './FilterTags'
 
 export type SearchRequest = {
   category: CategoryDefinition
@@ -21,13 +26,27 @@ type Pagination =
   | { mode: 'listing'; cursors: (string | undefined)[] }
 
 export function ProductSearchDialog({ category, target, returnFocus, onClose, onSelected }: Props) {
-  const [input, setInput] = useState('')
+  const draft = useSearchSession((state) => state.drafts[category.id] ?? emptyDraft)
+  const update = useSearchSession((state) => state.update)
+  const setDraft = (next: typeof draft) => update(category.id, next)
+  const input = draft.keyword
+  const setInput = (keyword: string) => setDraft({ ...draft, keyword })
   const [composing, setComposing] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const query = input.trim()
-  const debounced = useDebouncedValue(query)
+  // A single timer for all product-search inputs, including the end of IME composition.
+  const signature = JSON.stringify({ draft, composing })
+  const debounced = useDebouncedValue(signature)
   const categories = useCatalogCategories()
-  const waiting = composing || query !== debounced
+  const available = categories.data?.categories.includes(category.id) ?? false
+  const metadata = useCategoryFilters(category.id, available)
+  const definitions = getUiFilters(category.id, metadata.data)
+  const { conditions, errors } = compileConditions(category.id, definitions, draft)
+  const hasFilters = category.id !== 'os'
+  const tagCount = conditionTags(definitions, draft).length
+  const waiting = composing || signature !== debounced
+  const invalid = Object.keys(errors).length > 0
 
   return (
     <Dialog variant="wide" title={`${category.label}を${target.mode === 'replace' ? '変更' : '選択'}`} titleId="search-title" onClose={onClose} initialFocus={inputRef} returnFocus={returnFocus}>
@@ -43,24 +62,40 @@ export function ProductSearchDialog({ category, target, returnFocus, onClose, on
           {input && <button type="button" className="icon-button clear-search" aria-label="検索語をクリア" onClick={() => { setInput(''); inputRef.current?.focus() }}><X size={17} aria-hidden="true" /></button>}
         </div>
         <p className="search-hint">{category.label}のカタログから検索します。空欄でも検索できます。</p>
+        <FilterTags definitions={definitions} draft={draft} onChange={setDraft} />
+        {hasFilters && <button type="button" className="button secondary mobile-filter-toggle" aria-expanded={filtersOpen} aria-controls="search-filters" onClick={() => setFiltersOpen(!filtersOpen)}>絞り込み{tagCount > 0 ? `（${tagCount}件）` : ''}</button>}
       </div>
-      {categories.isPending ? <div className="search-body"><SearchLoading /></div>
-        : categories.isError ? <div className="search-body"><SearchError error={categories.error} onRetry={() => { void categories.refetch() }} /></div>
-        : !categories.data.categories.includes(category.id) ? <div className="search-body"><p className="search-state">このカテゴリは現在カタログで利用できません。</p></div>
-        : waiting ? <div className="search-body"><SearchLoading waiting /></div>
-        : <SearchResults key={`${category.id}:${debounced}`} category={category} target={target} query={debounced} onSelected={onSelected} />}
+      <div className="search-workspace">
+        {hasFilters && <aside id="search-filters" className={`search-filters${filtersOpen ? ' is-open' : ''}`} aria-label="検索フィルター"
+          onCompositionStart={(event) => { if (event.target instanceof HTMLInputElement && event.target.type !== 'search') setComposing(true) }}
+          onCompositionEnd={(event) => { if (event.target instanceof HTMLInputElement && event.target.type !== 'search') setComposing(false) }}>
+          <h3>絞り込み</h3>
+          {metadata.isError ? <SearchError error={metadata.error} onRetry={() => { void metadata.refetch() }} title="フィルターを取得できませんでした" />
+            : metadata.isPending ? <p className="filter-help">フィルターを読み込んでいます…</p>
+            : <FilterPanel category={category.id} definitions={definitions} draft={draft} errors={errors} onChange={setDraft} />}
+        </aside>}
+        <div className="search-results-pane">
+          {categories.isPending ? <div className="search-body"><SearchLoading /></div>
+            : categories.isError ? <div className="search-body"><SearchError error={categories.error} onRetry={() => { void categories.refetch() }} /></div>
+            : !categories.data.categories.includes(category.id) ? <div className="search-body"><p className="search-state">このカテゴリは現在カタログで利用できません。</p></div>
+            : waiting ? <div className="search-body"><SearchLoading waiting /></div>
+            : tagCount > 0 && !metadata.data ? <div className="search-body"><p className="search-state">フィルターの取得後に検索します。条件を解除するとキーワードのみで検索できます。</p></div>
+            : invalid ? <div className="search-body"><p className="search-state" role="alert">検索条件を確認してください。{Object.values(errors).join(' ')}</p></div>
+            : <SearchResults key={`${category.id}:${debounced}`} category={category} target={target} query={query} conditions={conditions} onSelected={onSelected} />}
+        </div>
+      </div>
     </Dialog>
   )
 }
 
-function SearchResults({ category, target, query, onSelected }: Pick<Props, 'category' | 'target' | 'onSelected'> & { query: string }) {
-  // Remounting on query/category changes resets the history and aborts old requests.
+function SearchResults({ category, target, query, conditions, onSelected }: Pick<Props, 'category' | 'target' | 'onSelected'> & { query: string; conditions: SearchConditions }) {
+  // Remounting on keyword/filter/category changes resets history and aborts old requests.
   const [pagination, setPagination] = useState<Pagination>(() => query
     ? { mode: 'keyword', offsets: [0] }
     : { mode: 'listing', cursors: [undefined] })
   const search = useProductSearch(pagination.mode === 'keyword'
-    ? { category: category.id, mode: 'keyword', query, offset: pagination.offsets.at(-1) }
-    : { category: category.id, mode: 'listing', cursor: pagination.cursors.at(-1) })
+    ? { category: category.id, mode: 'keyword', query, conditions, offset: pagination.offsets.at(-1) }
+    : { category: category.id, mode: 'listing', conditions, cursor: pagination.cursors.at(-1) })
   const pageCount = pagination.mode === 'keyword' ? pagination.offsets.length : pagination.cursors.length
   const hasNext = search.data !== undefined && (pagination.mode === 'keyword'
     ? search.data.meta.next_offset !== null : search.data.meta.next_cursor !== null)
@@ -73,7 +108,11 @@ function SearchResults({ category, target, query, onSelected }: Pick<Props, 'cat
     if (saved) onSelected(product.name)
     else setSelectionError(true)
   }
-  function changePage(next: Pagination) { setPagination(next); scrollRef.current?.scrollTo({ top: 0 }) }
+  function changePage(next: Pagination) {
+    setPagination(next)
+    scrollRef.current?.scrollTo({ top: 0 })
+    scrollRef.current?.closest('.search-workspace')?.scrollTo({ top: 0 })
+  }
   function previousPage() {
     if (pageCount <= 1) return
     changePage(pagination.mode === 'keyword'
@@ -116,7 +155,7 @@ function SearchResults({ category, target, query, onSelected }: Pick<Props, 'cat
                 <button type="button" className="button secondary" disabled={!hasNext || search.isFetching} onClick={nextPage}>次へ<ChevronRight size={15} aria-hidden="true" /></button>
               </nav>
             )}
-            {search.data.meta.window_exhausted && <p className="window-note">表示上限に達しました。検索語を追加して絞り込んでください。</p>}
+            {search.data.meta.window_exhausted && <p className="window-note">表示上限に達しました。検索語やフィルターで絞り込んでください。</p>}
           </>
         )}
       </div>

@@ -57,12 +57,14 @@ npm run test:live
 **pc-parts-catalog**：<https://pc-parts-catalog.kikuuuty.workers.dev>
 
 - `GET /v1/categories`：API側の30カテゴリと将来追加される非空のカテゴリIDを受け入れます。UIは `src/domain/categories.ts` の30カテゴリを扱い、選択カテゴリがAPI一覧に存在することを確認してから検索します。
+- `GET /v1/categories/:category/filters`：カテゴリ全体の候補・型・数値範囲を取得。Zodで検証し、決定済みの表示項目・順序と組み合わせます。OSは取得しません。
+- フィルターあり：`POST /v1/search` に `filters` / `ranges` / `facets` を送ります。検索語は `keyword`。検索語ありはoffset、なしはcursorです。条件なしでは既存のGET経路を使用します。
 - 検索語あり：`GET /v1/search?category=cpu&q=9800x3d&limit=20&offset=0`。続きは `meta.next_offset`、前へは使用済みoffsetの履歴を使用します。`next_cursor` はnull、検索windowは1000件です。
 - 検索語なし：`GET /v1/search?category=cpu&limit=20`。続きは `cursor=meta.next_cursor`、前へは使用済みcursor（初回は省略）の履歴を使用します。`q` / `offset` は送信しません。`window_limit` / `next_offset` はnull、レスポンスの `offset` は全ページ0です。
 - `SearchParams` とDialogのpagination状態はkeyword/listingの判別可能なunionです。cursorは不透明な値として扱い、検索語変更時に履歴を初期化します。
 - 1ページ20件。次のoffset/cursorがnullなら「次へ」を無効化します。keywordの `window_exhausted` は絞り込み案内を表示します。`meta.returned` は表示中の件数で、総ヒット数ではありません。
 - 認証なし、`credentials: 'omit'`、公開CORSを使ってブラウザから直接接続します。
-- 300ms debounce、IME変換中の検索抑制、検索語変更・モーダル終了時のAbortSignalによる中断。
+- キーワード・数値入力・選択変更・解除をまとめた300ms debounce。IME変換中と入力エラー時は検索抑制、条件変更・モーダル終了時はAbortSignalで中断。選択肢内検索はローカル処理です。
 - Queryのメモリキャッシュは60秒。通信/timeout/502/503/504は最大1回のbackoff再試行（`Retry-After` が60秒を超える場合は自動再試行なし）。429や400/500、schemaエラーは自動再試行しません。手動再試行も `Retry-After` を尊重します。
 - 個々のHTTPリクエストは15秒でtimeout。利用者には日本語のエラーを表示し、レスポンス本文やstack traceは表示しません。
 
@@ -77,6 +79,8 @@ npm run test:live
 `CatalogProduct` は30カテゴリのZod discriminated unionから型を導出しています。既存9カテゴリに加え、モニター・キーボード・マウス・ヘッドホン・Webカメラのtyped scalar specをBackendに合わせて検証します。それ以外はregistryから空specの分岐を生成します。未知の追加フィールドは除去し、既知のspecは `null` を許容しますが、フィールド自体の欠落や型違いは拒否します。HTTP製品schemaは `source` を必須とし、以前の保存済み製品はsourceなしでも復元できます（保存versionは5を維持）。製品参照には `source` とカテゴリを含む `upstream_key` を保持します。APIのDB内部IDやUUID単体を恒久的な製品識別子として扱いません。
 
 2026-09-20に `src/model.js` / `src/extended-models.js` / README / API文書を再確認し、全30カテゴリに対応しました。通常のGET検索に含まれない接続方式などのfacetsは推測せず、取得できたscalar specだけを要約します。specが空のカテゴリもメーカー名・製品名で検索・選択・保存できます。
+
+2026-09-22にBackend HEAD `13e28b4` の [Filter metadata契約](https://github.com/kikuuuty/pc-parts-catalog/blob/13e28b4cac95b8f91bfb59721756122bd6fab2e5/docs/category-filters.md)・Worker・検索compilerと本番APIを照合し、カテゴリ別フィルターを追加しました。詳細な確定仕様・カテゴリ別表示順は [検索フィルター仕様](docs/search-filters.md) を参照してください。接続方式等を検索条件に使っても、通常検索結果のspecに補完はしません。
 
 ## 主な構成
 
@@ -172,8 +176,9 @@ Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（�
 ## 現在の機能
 
 - OSを含む主カテゴリ10個を常時表示し、4グループのoptional 13カテゴリを必要に応じて追加できる構成シート。広いPC画面はシート＋サマリーの2カラム、幅1100px以下ではシート幅を優先してサマリーを下に配置
-- 各カテゴリ共通の中央配置wide modal、基本検索、ページ移動、主要スペック表示
-  - PC：幅最大900px・高さ85dvh。モバイル（幅700px以下）：四辺に12pxの余白を残すほぼ全画面表示。タイトル・検索欄を上部に残し、結果領域だけをスクロールします。
+- 各カテゴリ共通の中央配置wide modal、キーワード＋カテゴリ別フィルター、ページ移動、主要スペック表示
+  - PC：幅最大900px・高さ85dvh。左にフィルター、右に結果を配置し、独立してスクロール。モバイル（幅700px以下）：四辺に12pxの余白を残すほぼ全画面表示。タイトル・検索欄・条件タグを上部に残し、折りたたみのフィルターと結果を下部でスクロールします。
+  - 検索欄付き複数選択、数値範囲、条件タグの個別解除・全解除。キーワードと条件はカテゴリ別にメモリ内保持し、追加/置換で共有。開き直すと1ページ目、リロードでリセットします。
   - 共通 `Dialog` は用途を明示する `variant="wide" | "confirm" | "edit"` を必須指定。検索は追加/置換共通の `ProductSearchDialog`、構成リセットは小型confirm、任意項目名は小型editを使用します。
 - desktop：列見出しを上部に一度だけ表示し、製品名（主要スペックは小さな2行目）・価格・削除を共通CSS Gridで横一列に配置。空カテゴリ約70px、1製品入り約75px、multipleの追加1行約46pxを目安にしています。長い製品名/specは省略表示し、titleとアクセシブル名で全文を確認できます。
 - 幅800px以下：製品名と削除ボタンを上段、価格を下段の右側に配置。320px幅でも操作領域の重なりと横スクロールを防ぎます。モバイルの製品名は最大2行です。
@@ -191,7 +196,7 @@ Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（�
 
 Phase 3へ進む前に、電力/互換性に必要なカタログspecの欠損時の扱い、同一カテゴリ複数Itemやkitの内容数の解釈、価格0円のパーツも判定対象にするルール、任意項目の情報不足、概算/警告の根拠と表示密度を検討します。保存に新しいユーザー設定を追加する場合はmigrationも必要です。
 
-外部価格取得・互換性判定・電力計算・URL共有・ログイン・クラウド保存・高度なフィルターは未実装です。
+外部価格取得・互換性判定・電力計算・URL共有・ログイン・クラウド保存・条件連動の候補件数表示は未実装です。
 
 ## データ出典
 

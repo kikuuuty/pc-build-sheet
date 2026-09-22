@@ -4,6 +4,8 @@ import { categoriesResponseSchema, searchResponseSchema } from '../src/api/catal
 import { partCategories } from '../src/domain/categories'
 import { CATALOG_BASE_URL } from '../src/api/catalog/client'
 import { productSpecSummary } from '../src/domain/product-summary'
+import { filtersResponseSchema } from '../src/api/catalog/filters'
+import { getUiFilters } from '../src/features/search/filter-config'
 
 test('production API: categories and all 30 product contracts', async ({ request }) => {
   // Explicitly opt-in via npm run test:live; ordinary tests do not depend on production.
@@ -31,6 +33,68 @@ test('production API: categories and all 30 product contracts', async ({ request
     for (const product of result.data) expect(typeof productSpecSummary(product)).toBe('string')
     expect(result.meta).toMatchObject({ offset: 0, next_offset: null, window_limit: null, window_exhausted: false })
   }
+})
+
+test('production filters: all 30 metadata contracts and monitor custom resolution search', async ({ request }) => {
+  test.setTimeout(240_000)
+  for (const category of partCategories) {
+    await delay(3500)
+    const url = `${CATALOG_BASE_URL}/v1/categories/${category.id}/filters`
+    let response = await request.get(url)
+    if (response.status() === 429 || response.status() === 503) {
+      const retryAfter = Number(response.headers()['retry-after'])
+      if (Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter <= 60) {
+        await delay(retryAfter * 1000)
+        response = await request.get(url)
+      }
+    }
+    expect(response.status(), category.id).toBe(200)
+    const metadata = filtersResponseSchema.parse(await response.json())
+    expect(metadata.category).toBe(category.id)
+    const definitions = getUiFilters(category.id, metadata)
+    expect(definitions.length, category.id).toBeGreaterThanOrEqual(category.id === 'os' ? 0 : 1)
+  }
+  await delay(3500)
+  const response = await request.post(`${CATALOG_BASE_URL}/v1/search`, {
+    data: { category: 'monitor', ranges: { resolution_height: { min: 1080, max: 1200 } }, limit: 20 },
+  })
+  expect(response.status()).toBe(200)
+  const result = searchResponseSchema.parse(await response.json())
+  expect(result.data.length).toBeGreaterThan(0)
+  for (const product of result.data) {
+    expect(product.category).toBe('monitor')
+    if (product.category === 'monitor') {
+      expect(product.specs.resolution_height).toBeGreaterThanOrEqual(1080)
+      expect(product.specs.resolution_height).toBeLessThanOrEqual(1200)
+    }
+  }
+})
+
+test('production filters in browser: typed POST, matching products, mobile layout and session restore', async ({ page }, testInfo) => {
+  await page.goto('/')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await expect(page.locator('summary[aria-label="ソケットを選択"]')).toBeVisible()
+  await delay(3500)
+  await page.locator('summary[aria-label="ソケットを選択"]').click()
+  const filtered = page.waitForResponse((response) => response.request().method() === 'POST'
+    && new URL(response.url()).pathname === '/v1/search')
+  await page.getByRole('checkbox', { name: 'AM5', exact: true }).check()
+  const response = await filtered
+  expect(response.status()).toBe(200)
+  expect(response.request().postDataJSON()).toMatchObject({ filters: { socket: ['AM5'] } })
+  const result = searchResponseSchema.parse(await response.json())
+  expect(result.data.length).toBeGreaterThan(0)
+  expect(result.data.every((product) => product.category === 'cpu' && product.specs.socket === 'AM5')).toBe(true)
+  await expect(page.locator('.search-result')).toHaveCount(result.meta.returned)
+  await page.screenshot({ path: testInfo.outputPath('live-filters-desktop.png') })
+  await page.getByRole('button', { name: '閉じる', exact: true }).click()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'ソケット: AM5を解除' })).toBeVisible()
+  await expect(page.getByRole('complementary', { name: '検索フィルター' })).toBeHidden()
+  await expect(page.locator('.search-result')).toHaveCount(result.meta.returned)
+  expect(await page.getByRole('dialog').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  await page.screenshot({ path: testInfo.outputPath('live-filters-mobile.png') })
 })
 
 test('production browser: CPU listing, cursor/offset next and previous, 9800x3d search/add/reload/remove', async ({ page }) => {

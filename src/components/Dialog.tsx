@@ -39,7 +39,7 @@ export function Dialog({ title, titleId, onClose, children, variant, initialFocu
       onCancel={(event) => { event.preventDefault(); onClose() }}
       onKeyDown={(event) => {
         if (event.key !== 'Tab') return
-        const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]'))
+        const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, summary, [tabindex]'))
           .filter((element) => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length > 0)
         const first = focusable[0]
         const last = focusable[focusable.length - 1]

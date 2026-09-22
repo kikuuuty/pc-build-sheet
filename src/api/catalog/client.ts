@@ -1,6 +1,8 @@
 import { z } from 'zod'
 import { categoriesResponseSchema, searchResponseSchema } from './schemas'
 import type { SearchParams } from './types'
+import type { PartCategory } from '../../domain/categories'
+import { conditionsLimitError, filtersResponseSchema } from './filters'
 
 export const CATALOG_BASE_URL = 'https://pc-parts-catalog.kikuuuty.workers.dev'
 export const SEARCH_PAGE_SIZE = 20
@@ -32,7 +34,7 @@ function retryAfterTime(value: string | null): number {
   return Number.isNaN(date) ? 0 : date
 }
 
-async function request<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+async function request<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal, body?: unknown): Promise<T> {
   const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS)
   const combinedSignal = signal ? AbortSignal.any([signal, timeout]) : timeout
   let response: Response
@@ -40,7 +42,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, signal?: AbortSign
     response = await fetch(`${CATALOG_BASE_URL}${path}`, {
       signal: combinedSignal,
       credentials: 'omit',
-      headers: { Accept: 'application/json' },
+      headers: { Accept: 'application/json', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
+      ...(body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) }),
     })
   } catch (error) {
     if (signal?.aborted) throw error
@@ -70,6 +73,12 @@ export function getCategories(signal?: AbortSignal) {
   return request('/v1/categories', categoriesResponseSchema, signal)
 }
 
+export async function getCategoryFilters(category: PartCategory, signal?: AbortSignal) {
+  const result = await request(`/v1/categories/${category}/filters`, filtersResponseSchema, signal)
+  if (result.category !== category) throw new CatalogError('invalid-response')
+  return result
+}
+
 export async function searchProducts(search: SearchParams, signal?: AbortSignal) {
   const { category } = search
   const params = new URLSearchParams({ category, limit: String(SEARCH_PAGE_SIZE) })
@@ -79,7 +88,16 @@ export async function searchProducts(search: SearchParams, signal?: AbortSignal)
     params.set('q', search.query.trim())
     params.set('offset', String(search.offset ?? 0))
   } else if (search.cursor !== undefined) params.set('cursor', search.cursor)
-  const result = await request(`/v1/search?${params}`, searchResponseSchema, signal)
+  const conditions = search.conditions ?? {}
+  if (conditionsLimitError(conditions)) throw new CatalogError('http', { status: 400 })
+  const advanced = Object.values(conditions).some((fields) => Object.keys(fields).length > 0)
+  const result = advanced
+    ? await request('/v1/search', searchResponseSchema, signal, {
+      category, limit: SEARCH_PAGE_SIZE, ...conditions,
+      ...(search.mode === 'keyword' ? { keyword: search.query.trim(), offset: search.offset ?? 0 }
+        : search.cursor === undefined ? {} : { cursor: search.cursor }),
+    })
+    : await request(`/v1/search?${params}`, searchResponseSchema, signal)
   // Listing metadata always has offset=0, including subsequent cursor pages.
   const expectedOffset = search.mode === 'keyword' ? search.offset ?? 0 : 0
   if (result.data.some((product) => product.category !== category)
