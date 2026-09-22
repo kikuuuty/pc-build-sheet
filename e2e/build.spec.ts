@@ -24,6 +24,7 @@ function makeProduct(category: PartCategory, name: string, index = 0) {
 async function mockCatalog(page: Page) {
   await page.route(`${api}/v1/categories`, (route) => route.fulfill({ json: categoriesFixture }))
   await page.route(`${api}/v1/categories/*/filters`, (route) => route.fulfill({ json: { category: new URL(route.request().url()).pathname.split('/')[3], filters: [] } }))
+  await page.route(`${api}/v1/categories/*/facets`, (route) => route.fulfill({ json: { category: new URL(route.request().url()).pathname.split('/')[3], facets: {} } }))
   await page.route(`${api}/v1/search?**`, (route) => {
     const params = new URL(route.request().url()).searchParams
     const category = params.get('category') as PartCategory

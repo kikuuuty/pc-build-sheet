@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { categoriesResponseSchema, searchResponseSchema } from './schemas'
 import type { SearchParams } from './types'
 import type { PartCategory } from '../../domain/categories'
-import { conditionsLimitError, filtersResponseSchema } from './filters'
+import { conditionsLimitError, dynamicFacetResponseSchema, filtersResponseSchema, typedConditions, type SearchConditions } from './filters'
 
 export const CATALOG_BASE_URL = 'https://pc-parts-catalog.kikuuuty.workers.dev'
 export const SEARCH_PAGE_SIZE = 20
@@ -75,6 +75,14 @@ export function getCategories(signal?: AbortSignal) {
 
 export async function getCategoryFilters(category: PartCategory, signal?: AbortSignal) {
   const result = await request(`/v1/categories/${category}/filters`, filtersResponseSchema, signal)
+  if (result.category !== category) throw new CatalogError('invalid-response')
+  return result
+}
+
+export async function getDynamicFacets(category: PartCategory, conditions: SearchConditions, signal?: AbortSignal) {
+  const body = typedConditions(conditions)
+  if (conditionsLimitError(body)) throw new CatalogError('http', { status: 400 })
+  const result = await request(`/v1/categories/${category}/facets`, dynamicFacetResponseSchema, signal, body)
   if (result.category !== category) throw new CatalogError('invalid-response')
   return result
 }

@@ -36,10 +36,33 @@ export const filtersResponseSchema = z.object({ category: z.string().min(1), fil
 export type FilterDefinition = z.infer<typeof filterDefinitionSchema>
 export type FilterMetadata = z.infer<typeof filtersResponseSchema>
 export type FilterValue = string | number
+export const dynamicFacetOptionSchema = z.object({
+  value: z.union([z.string().min(1).max(200).refine((value) => !!value.trim()), z.number()]),
+  label: z.string().refine((label) => !!label.trim()),
+  count: z.number().int().positive(),
+})
+export const dynamicFacetResponseSchema = z.object({
+  category: z.string().refine((category) => !!category.trim()),
+  facets: z.record(common.id, z.object({
+    options: z.array(dynamicFacetOptionSchema).max(512)
+      .refine((options) => new Set(options.map(({ value }) => value)).size === options.length, 'Duplicate facet values'),
+  })),
+})
+export type DynamicFacetOption = z.infer<typeof dynamicFacetOptionSchema>
+export type DynamicFacetResponse = z.infer<typeof dynamicFacetResponseSchema>
 export type SearchConditions = {
   filters?: Record<string, FilterValue[]>
   ranges?: Record<string, { min?: number; max?: number }>
   facets?: Record<string, string[]>
+}
+
+// Explicit projection shared by the facet HTTP body and cache key. Never include keyword/pagination.
+export function typedConditions({ filters, ranges, facets }: SearchConditions): SearchConditions {
+  return {
+    ...(filters && Object.keys(filters).length ? { filters } : {}),
+    ...(ranges && Object.keys(ranges).length ? { ranges } : {}),
+    ...(facets && Object.keys(facets).length ? { facets } : {}),
+  }
 }
 
 export function conditionsLimitError(conditions: SearchConditions): string | undefined {

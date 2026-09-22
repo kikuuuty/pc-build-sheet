@@ -37,7 +37,7 @@
 
 - 最上部は全カテゴリ共通のキーワード欄。PCは左フィルター/右結果の独立スクロール。モバイルは絞り込みを初期折りたたみし、パネルと結果を同じ下部領域でスクロール。詳細条件も折りたたみ。
 - 複数選択は検索欄付きチェックリスト。チェック後も開いたまま、Escapeで一覧を閉じて見出しへフォーカス。候補検索はローカル処理。候補一覧に高さ上限を設ける。
-- キーワード・選択・数値・解除すべてを共通の300ms debounceで反映。適用ボタンなし。IME変換中は製品検索しない。空欄で片側境界を省略、不正な数値/逆転範囲ではエラー表示し検索しない。カタログの観測範囲へclampせず、REALのstepへ丸めない。
+- 製品検索はキーワード・選択・数値・解除すべてを共通の300ms debounceで反映。Dynamic Facetは選択・数値・解除だけを独立した300ms debounceで反映し、キーワード編集で候補更新を遅延・再発行しない。適用ボタンなし。IME変換中は製品検索しない。空欄で片側境界を省略、不正な数値/逆転範囲ではエラー表示し検索しない。カタログの観測範囲へclampせず、REALのstepへ丸めない。
 - 条件変更で旧リクエストを中断し1ページ目に戻る。keywordはoffset、空欄はcursor。全条件をQuery keyに含める。
 - タグは選択肢ごと・範囲項目ごとに表示し個別解除。初期3件と「ほかN件」を表示。全解除は基本/詳細のフィルターだけを消し、キーワードを残す。
 - カテゴリ別に入力をメモリ内保持し、追加/置換で共有。開き直しは1ページ目。リロードでリセット。localStorageや構成の保存schemaは変更しない。
@@ -45,7 +45,15 @@
 ## API境界・障害時
 
 - `control` / `target` / `value_type` / `options` / `range` をZod検証。カテゴリ不一致、重複ID、型違い、逆転した範囲等を拒否。未知のカテゴリ別追加項目はUIへ自動露出しない。
-- metadataはカテゴリ全体の候補。現在の条件で候補や件数を再計算しない。空配列とnull範囲を許容し、使えない数値controlを無効化。保存した選択肢が消えた場合は自動的に条件を緩めず、解除/再選択を案内。
+- `GET /v1/categories/:category/filters` はdefinition / label / control / target / value_type / static range / 初期options。空配列とnull範囲を許容し、使えない数値controlを無効化。
+- `POST /v1/categories/:category/facets` は現在のtyped条件に応じたmulti_select候補。`POST /v1/search` は製品結果。rangeのmin/max/stepは静的metadataのままで、Dynamic Range Aggregationは行わない。
+- `SearchDraft → static definitions → compileConditions → canonical SearchConditions`を検索とDynamic Facetの両方で共有。Dynamic responseは純粋関数`mergeDynamicFacetOptions`で表示用定義にだけ反映し、compiler・タグは常に静的定義を使う。候補の縮小で条件を暗黙に解除・省略しない。
+- Dynamic Facetのbodyとquery keyには`filters / ranges / facets`のみ。keyword、orderBy、pagination、include、identifierは含めない。例えばkeyword=`9800X3D`、manufacturer=`AMD`でも候補はAMDというtyped条件に追従し、9800X3D検索結果だけの候補ではない。
+- Backendのself-exclusionをそのまま使用。同一fieldの候補計算ではそのfield自身の条件だけが除かれるため、Intel + LGA1700でも他のIntel socketを追加できる。Frontendに互換表や条件除外ロジックを持たない。countは正の整数として検証・保持するが画面には表示しない。
+- 動的候補から消えた未選択値は一覧から除外。選択済み値はそのラベルと「現在利用できません」の表示を残し、欄内またはタグで解除可能。矛盾は製品検索を停止する入力エラーとは分ける。draft/sessionを自動変更しない。
+- 条件別React Query keyで古いrequestを中断し、debounce中は古いresponseを表示に適用しない。更新中は「候補を更新しています…」と表示し新規選択を一時停止するが、既存選択の解除やrange編集は可能。
+- Dynamic APIのnetwork/timeout/429/5xx/不正responseは小さな通知と再試行ボタンを表示し、静的候補へfallback。製品検索は継続する。Retry-After経過後に再試行可能。metadata失敗とは区別する。OSはFilter UI・metadata・Dynamic Facet requestなし。
+- NVMe SSD (`__nvme_ssd`) はFrontend専用の複合候補として静的定義から保持する例外。生facetの集合だけでは複合条件のself-exclusionを表せないため、その可否を推測せず既存UXを優先し、追加requestは行わない。SSD→`storage_type=SSD`、NVMe SSD→`storage_type=SSD AND nvme=1`の変換は維持。resolution preset/custom width/heightも静的rangeとして維持。
 - metadata取得失敗はフィルターパネルで再試行可能。選択条件なしならキーワード検索/一覧は利用可能。保存条件ありで定義がなければ、解除か取得成功まで製品検索を待つ。
 - 各選択10値、合計40値、filters 8項目、ranges 8項目、facets 4項目、全体16項目を検証。上限に達したチェックリストでも既存の選択は解除可能。
 - 条件なしはGET、条件ありはPOST。POSTには表示ラベル、step、空配列、空の条件groupを含めない。同項目内OR、項目間AND。facetsの結果展開は要求せず、既存製品schema・保存形式を維持。
@@ -56,3 +64,4 @@
 `npm test` はmetadata schema、HTTP変換、数値0・片側range・REAL端点、NVMe変換、解像度連動、未知/消滅条件、複雑度上限、カテゴリ別状態を検証。
 `npm run test:e2e` は固定APIでPC/モバイルの300ms統合待機・IME・入力エラー・型保持・cursor/offset・解除・状態復元・追加/置換・POST中断・候補検索・選択上限・Escape・320pxレイアウト・取得失敗/再試行・OSを検証。
 `npm run test:live` は任意の本番APIスモーク。通常CIは本番に依存しない。
+Dynamic Facetのschema（型・count・重複・512上限）、HTTP（body投影・abort・timeout・Retry-After）、表示merge、矛盾保持、特殊フィルターをunit testで検証。固定APIのPC/モバイルE2EでIntel/AMD候補更新、self-exclusion、矛盾解除、stale response、300ms debounce、keyword非連動、障害fallback/retryを検証する。live smokeはCPU静的metadataから実在manufacturerを選び、Dynamic POSTの200とschemaを確認する。

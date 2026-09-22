@@ -56,7 +56,7 @@ export function optionLabel(definition: FilterDefinition, value: FilterValue): s
     ?? original ?? String(value)
 }
 
-export type UiFilter = FilterDefinition & { single?: boolean; customRange?: boolean; hint?: string }
+export type UiFilter = FilterDefinition & { single?: boolean; customRange?: boolean; hint?: string; unavailableValues?: FilterValue[] }
 const booleans = new Set(['includes_cooler', 'water_cooled', 'xmp', 'expo', 'back_connect', 'supports_back_connect', 'pwm', 'hot_swappable', 'has_microphone'])
 
 export function getUiFilters(category: PartCategory, metadata?: FilterMetadata): UiFilter[] {

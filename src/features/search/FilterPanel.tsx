@@ -9,9 +9,10 @@ type Props = {
   draft: SearchDraft
   errors: Record<string, string>
   onChange: (draft: SearchDraft) => void
+  updating?: boolean
 }
 
-export function FilterPanel({ category, definitions, draft, errors, onChange }: Props) {
+export function FilterPanel({ category, definitions, draft, errors, onChange, updating }: Props) {
   const layout = getFilterLayout(category)
   function renderField(id: string) {
     if (id === 'resolution_preset') return (
@@ -25,12 +26,12 @@ export function FilterPanel({ category, definitions, draft, errors, onChange }: 
       </div>
     )
     const definition = definitions.find((definition) => definition.id === id)
-    return definition && <FilterField key={id} {...{ category, definition, draft, onChange }} error={errors[id]} />
+    return definition && <FilterField key={id} {...{ category, definition, draft, onChange, updating }} error={errors[id]} />
   }
   const hasDetails = layout.detail.some((id) => definitions.some((definition) => definition.id === id))
   return (
     <>
-      <p className="filter-help">変更から300ms後に自動検索します。候補はカテゴリ全体の情報です。</p>
+      <p className="filter-help">変更から300ms後に自動検索します。選択中の条件に合わせて候補を更新します。</p>
       {layout.basic.map(renderField)}
       {hasDetails && <details className="advanced-filters"><summary>詳細条件</summary>{layout.detail.map(renderField)}</details>}
       {definitions.length === 0 && <p className="filter-help">このカテゴリで利用できるフィルターはありません。</p>}
@@ -39,7 +40,7 @@ export function FilterPanel({ category, definitions, draft, errors, onChange }: 
   )
 }
 
-function FilterField({ category, definition, draft, onChange, error }: Omit<Props, 'definitions' | 'errors'> & { definition: UiFilter; error?: string }) {
+function FilterField({ category, definition, draft, onChange, error, updating }: Omit<Props, 'definitions' | 'errors'> & { definition: UiFilter; error?: string }) {
   const id = `filter-${definition.id}`
   if (definition.control === 'range') {
     const value = draft.ranges[definition.id] ?? emptyRange
@@ -67,22 +68,24 @@ function FilterField({ category, definition, draft, onChange, error }: Omit<Prop
     )
   }
   const values = draft.selections[definition.id] ?? []
+  const incompatible = !!definition.unavailableValues?.length
+  const message = error ?? (incompatible ? 'この条件は現在の他条件と両立しません。解除して選び直してください。' : undefined)
   if (definition.single) return (
     <div className="filter-field">
       <label htmlFor={id}>{definition.label}</label>
-      <select id={id} disabled={!definition.options.length} value={values.length ? String(definition.options.findIndex(({ value }) => value === values[0])) : ''}
-        aria-invalid={!!error} onChange={(event) => onChange(selectValues(draft, definition.id, event.target.value === '' ? [] : [definition.options[Number(event.target.value)].value]))}>
+      <select id={id} disabled={!definition.options.length && !values.length} value={values.length ? String(definition.options.findIndex(({ value }) => value === values[0])) : ''}
+        aria-invalid={!!message} onChange={(event) => onChange(selectValues(draft, definition.id, event.target.value === '' ? [] : [definition.options[Number(event.target.value)].value]))}>
         <option value="">{definition.options.length ? '指定なし' : '候補なし'}</option>
         {values.length > 0 && !definition.options.some(({ value }) => value === values[0]) && <option value="-1" disabled>利用できない条件</option>}
-        {definition.options.map(({ value }, index) => <option key={value} value={index}>{optionLabel(definition, value)}</option>)}
+        {definition.options.map(({ value }, index) => <option key={value} value={index} disabled={definition.unavailableValues?.includes(value) || (updating && !values.includes(value))}>{optionLabel(definition, value)}{definition.unavailableValues?.includes(value) ? '（現在利用できません）' : ''}</option>)}
       </select>
-      {error && <p className="field-error" role="alert">{error}</p>}
+      {message && <p className="field-error" role="alert">{message}</p>}
     </div>
   )
-  return <MultiSelect {...{ category, definition, draft, onChange, error }} />
+  return <MultiSelect {...{ category, definition, draft, onChange, updating }} error={message} />
 }
 
-function MultiSelect({ definition, draft, onChange, error }: Omit<Props, 'definitions' | 'errors'> & { definition: Extract<UiFilter, { control: 'multi_select' }>; error?: string }) {
+function MultiSelect({ definition, draft, onChange, error, updating }: Omit<Props, 'definitions' | 'errors'> & { definition: Extract<UiFilter, { control: 'multi_select' }>; error?: string }) {
   const [query, setQuery] = useState('')
   const details = useRef<HTMLDetailsElement>(null)
   const values = draft.selections[definition.id] ?? []
@@ -108,10 +111,10 @@ function MultiSelect({ definition, draft, onChange, error }: Omit<Props, 'defini
               const checked = values.includes(value)
               const next = selectValues(draft, definition.id, checked ? values.filter((selected) => selected !== value) : [...values, value])
               // The global compiler checks limits again before any request is sent.
-              const disabled = !checked && (values.length >= 10 || selectedCount >= 40)
+              const disabled = !checked && (updating || values.length >= 10 || selectedCount >= 40)
               return <label className="filter-option" key={`${typeof value}:${value}`}>
                 <input type="checkbox" checked={checked} disabled={disabled} onChange={() => onChange(next)} />
-                <span>{optionLabel(definition, value)}</span>
+                <span>{optionLabel(definition, value)}{definition.unavailableValues?.includes(value) && '（現在利用できません）'}</span>
               </label>
             })}
             {!options.length && <p className="filter-help">候補がありません。</p>}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conditionsLimitError, filtersResponseSchema } from './filters'
+import { conditionsLimitError, dynamicFacetResponseSchema, filtersResponseSchema, typedConditions } from './filters'
 import { cpuFilters, range, selection } from '../../test/filter-fixtures'
 
 describe('filter metadata boundary', () => {
@@ -25,6 +25,37 @@ describe('filter metadata boundary', () => {
   it('rejects duplicate field IDs and option values', () => {
     expect(filtersResponseSchema.safeParse({ category: 'cpu', filters: [cpuFilters.filters[0], cpuFilters.filters[0]] }).success).toBe(false)
     expect(filtersResponseSchema.safeParse({ category: 'cpu', filters: [selection('socket', 'ソケット', ['AM5', 'AM5'])] }).success).toBe(false)
+  })
+})
+
+describe('dynamic facet boundary', () => {
+  const option = { value: 'LGA 1700', label: 'LGA 1700', count: 30 }
+  const payload = (options: unknown[]) => ({ category: 'cpu', facets: { socket: { options } } })
+  it('preserves counts, value types and exact whitespace; accepts empty candidates', () => {
+    expect(dynamicFacetResponseSchema.parse(payload([option]))).toEqual(payload([option]))
+    expect(dynamicFacetResponseSchema.safeParse(payload([])).success).toBe(true)
+    expect(dynamicFacetResponseSchema.safeParse(payload([{ ...option, value: 0 }, { ...option, value: '0' }])).success).toBe(true)
+  })
+  it.each([0, -1, 1.5, '1', null, Infinity])('rejects invalid count %s', (count) => {
+    expect(dynamicFacetResponseSchema.safeParse(payload([{ ...option, count }])).success).toBe(false)
+  })
+  it.each([null, true, '', ' ', 'x'.repeat(201), Infinity])('rejects invalid value %s', (value) => {
+    expect(dynamicFacetResponseSchema.safeParse(payload([{ ...option, value }])).success).toBe(false)
+  })
+  it('rejects malformed envelopes, IDs, labels and duplicates; enforces 512 options', () => {
+    for (const input of [{}, { ...payload([]), category: ' ' }, { category: 'cpu', facets: { 'Bad-ID': { options: [] } } },
+      payload([{ ...option, label: '' }]), payload([{ ...option, label: ' ' }]), payload([option, option]), payload([{}])]) {
+      expect(dynamicFacetResponseSchema.safeParse(input).success).toBe(false)
+    }
+    const options = Array.from({ length: 512 }, (_, value) => ({ ...option, value }))
+    expect(dynamicFacetResponseSchema.safeParse(payload(options)).success).toBe(true)
+    expect(dynamicFacetResponseSchema.safeParse(payload([...options, { ...option, value: 512 }])).success).toBe(false)
+  })
+  it('projects only typed groups for both HTTP and query keys', () => {
+    const input = { filters: { manufacturer: ['Intel'] }, ranges: {}, facets: {}, keyword: 'x', limit: 20, cursor: 'x' }
+    expect(typedConditions(input)).toEqual({ filters: input.filters })
+    const changed = { ...input, keyword: 'changed' }
+    expect(typedConditions(changed)).toEqual(typedConditions(input))
   })
 })
 it('enforces aggregate values and per-target/total field limits', () => {

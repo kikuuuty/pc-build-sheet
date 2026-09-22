@@ -2,8 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import fixture from '../../test/fixtures/cpu-search.json'
 import listingFixture from '../../test/fixtures/cpu-listing.json'
 import categories from '../../test/fixtures/categories.json'
-import { CatalogError, catalogRetryDelay, getCategories, getCategoryFilters, searchProducts, shouldRetryCatalogRequest } from './client'
-import { cpuFilters } from '../../test/filter-fixtures'
+import { CatalogError, catalogRetryDelay, getCategories, getCategoryFilters, getDynamicFacets, searchProducts, shouldRetryCatalogRequest } from './client'
+import { cpuFacets, cpuFilters } from '../../test/filter-fixtures'
 import type { SearchParams } from './types'
 import { optionalCategories } from '../../domain/categories'
 import { optionalProduct } from '../../test/optional-products'
@@ -12,6 +12,59 @@ const listing = { ...listingFixture, meta: { ...listingFixture.meta, limit: 20 }
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('catalog client', () => {
+  it('POSTs only typed conditions to facets, omits credentials and forwards cancellation', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(Response.json(cpuFacets())))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    const input = { filters: { includes_cooler: [0] }, ranges: { core_count: { min: 6 } }, facets: { socket: ['AM5'] },
+      keyword: '9800X3D', orderBy: 'name', limit: 20, offset: 0, cursor: 'x', include: ['specs'], identifier: 'x' }
+    expect(await getDynamicFacets('cpu', input, controller.signal)).toEqual(cpuFacets())
+    const [url, options] = fetchMock.mock.calls[0]
+    expect(url).toMatch(/\/v1\/categories\/cpu\/facets$/)
+    expect(options).toMatchObject({ method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' } })
+    expect(JSON.parse(options.body)).toEqual({ filters: input.filters, ranges: input.ranges, facets: input.facets })
+    controller.abort()
+    expect(options.signal.aborted).toBe(true)
+    await getDynamicFacets('cpu', { filters: {}, ranges: {}, facets: {} })
+    expect(fetchMock.mock.calls[1][1].body).toBe('{}')
+    await expect(getDynamicFacets('gpu', {})).rejects.toMatchObject({ kind: 'invalid-response' })
+  })
+  it.each([429, 500, 502, 503, 504])('shares facet HTTP %i / Retry-After policy', async (status) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status, headers: { 'Retry-After': '30', 'X-Request-ID': 'facet-id' } })))
+    const error = await getDynamicFacets('cpu', {}).catch((error: Error) => error) as CatalogError
+    expect(error).toMatchObject({ kind: 'http', status, requestId: 'facet-id' })
+    expect(catalogRetryDelay(0, error)).toBeGreaterThan(29_000)
+    expect(shouldRetryCatalogRequest(0, error)).toBe([502, 503, 504].includes(status))
+  })
+  it('honors HTTP-date Retry-After on facets', async () => {
+    const date = new Date(Date.now() + 30_000).toUTCString()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 429, headers: { 'Retry-After': date } })))
+    await expect(getDynamicFacets('cpu', {})).rejects.toMatchObject({ retryAt: Date.parse(date) })
+  })
+  it.each(['not json', '{"category":"cpu","facets":{"socket":{"options":[{}]}}}'])('rejects malformed facets %s', async (body) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body)))
+    await expect(getDynamicFacets('cpu', {})).rejects.toMatchObject({ kind: 'invalid-response' })
+  })
+  it('maps facet network failures and distinguishes timeout from caller abort', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')))
+    await expect(getDynamicFacets('cpu', {})).rejects.toMatchObject({ kind: 'network' })
+    const timeout = new AbortController()
+    const timeoutMock = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(timeout.signal)
+    vi.stubGlobal('fetch', vi.fn((_url, options: RequestInit) => new Promise((_resolve, reject) => {
+      options.signal!.addEventListener('abort', () => reject(options.signal!.reason))
+    })))
+    const pending = getDynamicFacets('cpu', {})
+    const assertion = expect(pending).rejects.toMatchObject({ kind: 'timeout' })
+    timeout.abort(new DOMException('Timed out', 'TimeoutError'))
+    await assertion
+    expect(timeoutMock).toHaveBeenCalledWith(15_000)
+    timeoutMock.mockReturnValue(new AbortController().signal)
+    const caller = new AbortController()
+    const cancelled = getDynamicFacets('cpu', {}, caller.signal)
+    const cancelledAssertion = expect(cancelled).rejects.toMatchObject({ name: 'AbortError' })
+    caller.abort()
+    await cancelledAssertion
+  })
   it('fetches category metadata and rejects category mismatches', async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(Response.json(cpuFilters)))
     vi.stubGlobal('fetch', fetchMock)

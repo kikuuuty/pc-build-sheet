@@ -4,7 +4,7 @@ import { categoriesResponseSchema, searchResponseSchema } from '../src/api/catal
 import { partCategories } from '../src/domain/categories'
 import { CATALOG_BASE_URL } from '../src/api/catalog/client'
 import { productSpecSummary } from '../src/domain/product-summary'
-import { filtersResponseSchema } from '../src/api/catalog/filters'
+import { dynamicFacetResponseSchema, filtersResponseSchema } from '../src/api/catalog/filters'
 import { getUiFilters } from '../src/features/search/filter-config'
 
 test('production API: categories and all 30 product contracts', async ({ request }) => {
@@ -51,6 +51,27 @@ test('production filters: all 30 metadata contracts and monitor custom resolutio
     expect(response.status(), category.id).toBe(200)
     const metadata = filtersResponseSchema.parse(await response.json())
     expect(metadata.category).toBe(category.id)
+    if (category.id === 'cpu') {
+      const manufacturer = metadata.filters.find((field) => field.id === 'manufacturer')
+      expect(manufacturer?.control).toBe('multi_select')
+      if (manufacturer?.control !== 'multi_select') throw new Error('Missing manufacturer selection')
+      expect(manufacturer.options.length).toBeGreaterThan(0)
+      await delay(3500)
+      const url = `${CATALOG_BASE_URL}/v1/categories/cpu/facets`
+      const data = { filters: { manufacturer: [manufacturer.options[0].value] } }
+      let facets = await request.post(url, { data })
+      if ([429, 503].includes(facets.status())) {
+        const wait = Number(facets.headers()['retry-after'])
+        if (Number.isFinite(wait) && wait > 0 && wait <= 60) {
+          await delay(wait * 1000)
+          facets = await request.post(url, { data })
+        }
+      }
+      expect(facets.status()).toBe(200)
+      const parsed = dynamicFacetResponseSchema.parse(await facets.json())
+      expect(parsed.category).toBe('cpu')
+      expect(parsed.facets.manufacturer.options.length).toBeGreaterThan(0)
+    }
     const definitions = getUiFilters(category.id, metadata)
     expect(definitions.length, category.id).toBeGreaterThanOrEqual(category.id === 'os' ? 0 : 1)
   }

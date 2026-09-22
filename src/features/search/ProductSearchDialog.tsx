@@ -1,13 +1,14 @@
 import { useRef, useState, type RefObject } from 'react'
 import { Plus, Search, X, ChevronLeft, ChevronRight, ArrowLeftRight } from 'lucide-react'
-import { useCatalogCategories, useCategoryFilters, useProductSearch } from '../../api/catalog/queries'
+import { useCatalogCategories, useCategoryFilters, useDynamicFacets, useProductSearch } from '../../api/catalog/queries'
 import type { CategoryDefinition } from '../../domain/categories'
 import type { CatalogProduct } from '../../api/catalog/types'
 import { productSpecSummary } from '../../domain/product-summary'
 import { Dialog } from '../../components/Dialog'
 import { Attribution } from '../../components/Attribution'
 import { useBuildStore } from '../build/store'
-import { SearchEmpty, SearchError, SearchLoading } from './SearchFeedback'
+import { DynamicFacetError, SearchEmpty, SearchError, SearchLoading } from './SearchFeedback'
+import { mergeDynamicFacetOptions } from './dynamic-facets'
 import { useDebouncedValue } from './useDebouncedValue'
 import type { SearchConditions } from '../../api/catalog/filters'
 import { getUiFilters } from './filter-config'
@@ -47,6 +48,15 @@ export function ProductSearchDialog({ category, target, returnFocus, onClose, on
   const tagCount = conditionTags(definitions, draft).length
   const waiting = composing || signature !== debounced
   const invalid = Object.keys(errors).length > 0
+  // Independent typed-input timer: keyword/IME edits never invalidate facet data or its key.
+  const facetSignature = JSON.stringify({ selections: draft.selections, ranges: draft.ranges })
+  const debouncedFacets = useDebouncedValue(facetSignature)
+  const facetWaiting = facetSignature !== debouncedFacets
+  // Use CURRENT conditions even while disabled: switching keys detaches/aborts the old query immediately.
+  const dynamic = useDynamicFacets(category.id, conditions, available && !!metadata.data && !invalid && !facetWaiting)
+  const updatingFacets = !invalid && (facetWaiting || dynamic.isPending || dynamic.isFetching)
+  const displayDefinitions = mergeDynamicFacetOptions(definitions,
+    !invalid && !facetWaiting && !dynamic.isError ? dynamic.data : undefined, draft.selections)
 
   return (
     <Dialog variant="wide" title={`${category.label}を${target.mode === 'replace' ? '変更' : '選択'}`} titleId="search-title" onClose={onClose} initialFocus={inputRef} returnFocus={returnFocus}>
@@ -72,7 +82,11 @@ export function ProductSearchDialog({ category, target, returnFocus, onClose, on
           <h3>絞り込み</h3>
           {metadata.isError ? <SearchError error={metadata.error} onRetry={() => { void metadata.refetch() }} title="フィルターを取得できませんでした" />
             : metadata.isPending ? <p className="filter-help">フィルターを読み込んでいます…</p>
-            : <FilterPanel category={category.id} definitions={definitions} draft={draft} errors={errors} onChange={setDraft} />}
+            : <>
+              {updatingFacets && <p className="filter-help">候補を更新しています…</p>}
+              {!facetWaiting && dynamic.isError && <DynamicFacetError error={dynamic.error} onRetry={() => { void dynamic.refetch() }} />}
+              <FilterPanel category={category.id} definitions={displayDefinitions} draft={draft} errors={errors} onChange={setDraft} updating={updatingFacets} />
+            </>}
         </aside>}
         <div className="search-results-pane">
           {categories.isPending ? <div className="search-body"><SearchLoading /></div>
