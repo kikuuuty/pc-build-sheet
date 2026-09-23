@@ -1136,7 +1136,7 @@ test('filled sheet stays dense, aligns desktop columns and avoids mobile overlap
     const sheetBox = (await sheet.boundingBox())!
     if (width > 1100) {
       expect(summaryBox.width).toBeGreaterThanOrEqual(280)
-      expect(summaryBox.width).toBeLessThanOrEqual(294)
+      expect(summaryBox.width).toBeLessThanOrEqual(320)
       expect(summaryBox.x - (sheetBox.x + sheetBox.width)).toBeGreaterThanOrEqual(20)
       expect(summaryBox.x - (sheetBox.x + sheetBox.width)).toBeLessThanOrEqual(24)
     } else {

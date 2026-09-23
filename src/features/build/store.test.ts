@@ -7,6 +7,8 @@ import { MAX_NAME_LENGTH, MAX_PRICE, type ItemChanges } from './schemas'
 import { mainCategories, optionalCategories, partCategories } from '../../domain/categories'
 import { optionalProduct } from '../../test/optional-products'
 import { getBuildSummary } from './totals'
+import { getPowerSummary } from './power'
+import { powerProduct } from '../../test/power-products'
 
 const product = catalogProductSchema.parse(fixture.data[0])
 const storageProduct = catalogProductSchema.parse({ ...product, category: 'storage', upstream_key: 'Storage/test', name: 'Test SSD', specs: {
@@ -31,6 +33,50 @@ async function setup(storage: StateStorage) {
 }
 
 describe('build state and persistence', () => {
+  it('recalculates power through add, price edit, replace, remove, restore and reset without changing price semantics', async () => {
+    const { storage, data } = memoryStorage()
+    const { store } = await setup(storage)
+    const processor = powerProduct('cpu', { tdp_w: 120, ppt_w: 170 })
+    const kit = powerProduct('memory', { kit_quantity: 2 })
+    expect(store.getState().addItem(processor)).toBe(true)
+    expect(store.getState().addItem(kit)).toBe(true)
+    expect(store.getState().addItem(kit)).toBe(true)
+    const [cpuRow, firstKit, secondKit] = store.getState().items
+    expect(getPowerSummary(store.getState().items).estimatedPowerW).toBe(190)
+    expect(store.getState().updateItem(cpuRow.id, { price: 32800 })).toBe(true)
+    expect(store.getState().updateItem(firstKit.id, { price: 12000 })).toBe(true)
+    expect(store.getState().updateItem(secondKit.id, { price: 0 })).toBe(true)
+    expect(getBuildSummary(store.getState().items)).toEqual({ estimateTotal: 44800, partCount: 3, unpricedCount: 0 })
+    expect(getPowerSummary(store.getState().items).estimatedPowerW).toBe(190)
+    expect(store.getState().replaceItem(firstKit.id, powerProduct('memory', { kit_quantity: 4 }))).toBe(true)
+    expect(getPowerSummary(store.getState().items).estimatedPowerW).toBe(200)
+    expect(getBuildSummary(store.getState().items)).toEqual({ estimateTotal: 32800, partCount: 3, unpricedCount: 1 })
+    const { store: restored } = await setup(storage)
+    expect(getPowerSummary(restored.getState().items)).toEqual(getPowerSummary(store.getState().items))
+    expect(Object.keys(JSON.parse(data.get(BUILD_STORAGE_KEY)!).state)).toEqual(['items'])
+    restored.getState().removeItem(secondKit.id)
+    expect(getPowerSummary(restored.getState().items).estimatedPowerW).toBe(190)
+    restored.getState().clearBuild()
+    const { store: empty } = await setup(storage)
+    expect(getPowerSummary(empty.getState().items)).toMatchObject({ estimatedPowerW: 0, recommendedPsuW: null })
+    expect(getBuildSummary(empty.getState().items)).toEqual({ estimateTotal: 0, partCount: 0, unpricedCount: 0 })
+  })
+
+  it.each([1, 2, 3, 4])('counts migrated v%i kits once per expanded row, without multiplying legacy quantity again', async (version) => {
+    const { storage, data } = memoryStorage()
+    const legacy = [
+      { id: 'ram', kind: 'catalog', category: 'memory', product: powerProduct('memory', { kit_quantity: 2 }), quantity: 2, price: 10000 },
+      { id: 'fans', kind: 'catalog', category: 'case_fan', product: powerProduct('case_fan', { quantity: 3 }), quantity: 2, price: 3000 },
+    ].map((item) => ({ ...item, ...(version < 4 ? { source: 'buy' } : {}) }))
+    data.set(BUILD_STORAGE_KEY, JSON.stringify({ version, state: { items: legacy } }))
+    const { store } = await setup(storage)
+    expect(store.getState().items).toHaveLength(4)
+    expect(getPowerSummary(store.getState().items)).toMatchObject({ estimatedPowerW: 38, breakdown: { memory: 20, caseFans: 18 } })
+    expect(getBuildSummary(store.getState().items)).toEqual({ estimateTotal: 26000, partCount: 4, unpricedCount: 0 })
+    const { store: restored } = await setup(storage)
+    expect(getPowerSummary(restored.getState().items)).toEqual(getPowerSummary(store.getState().items))
+  })
+
   it.each([1, 2, 3, 4, 5])('loads all nine main categories from v%i with IDs, products and prices intact', async (version) => {
     const { storage, data } = memoryStorage()
     const items = mainCategories.filter(({ id }) => id !== 'os').map(({ id }, index) => {

@@ -6,7 +6,7 @@ type Props = {
   titleId: string
   onClose: () => void
   children: ReactNode
-  variant: 'wide' | 'confirm' | 'edit'
+  variant: 'wide' | 'confirm' | 'edit' | 'info'
   initialFocus?: RefObject<HTMLElement | null>
   returnFocus?: RefObject<HTMLElement | null>
 }
