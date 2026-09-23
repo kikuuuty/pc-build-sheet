@@ -34,6 +34,17 @@ async function mockCatalog(page: Page) {
 
 test.beforeEach(async ({ page }) => { await mockCatalog(page) })
 
+test('unavailable bulk summary leaves selection usable without summary probes or offers fan-out', async ({ page }) => {
+  const priceRequests: string[] = []
+  page.on('request', (request) => { if (request.url().includes('/offers')) priceRequests.push(request.url()) })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await expect(page.getByText('価格情報なし', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: `${productName}を構成に追加`, exact: true }).click()
+  await expect(page.getByRole('textbox', { name: `価格：${productName}（円）` })).toHaveValue('')
+  expect(priceRequests).toEqual([])
+})
+
 async function expectCenteredSearchDialog(page: Page) {
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()

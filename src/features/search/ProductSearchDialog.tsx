@@ -1,6 +1,6 @@
 import { useRef, useState, type RefObject } from 'react'
 import { Plus, Search, X, ChevronLeft, ChevronRight, ArrowLeftRight } from 'lucide-react'
-import { useCatalogCategories, useCategoryFilters, useDynamicFacets, useProductSearch } from '../../api/catalog/queries'
+import { useCatalogCategories, useCategoryFilters, useDynamicFacets, useProductSearch, useOffersSummary } from '../../api/catalog/queries'
 import type { CategoryDefinition } from '../../domain/categories'
 import type { CatalogProduct } from '../../api/catalog/types'
 import { productSpecSummary } from '../../domain/product-summary'
@@ -15,6 +15,8 @@ import { getUiFilters } from './filter-config'
 import { compileConditions, conditionTags, emptyDraft, useSearchSession } from './filter-state'
 import { FilterPanel } from './FilterPanel'
 import { FilterTags } from './FilterTags'
+import { SearchPrice } from './SearchPrice'
+import { searchPriceState, initialSearchPrice } from './search-price'
 
 export type SearchRequest = {
   category: CategoryDefinition
@@ -122,8 +124,12 @@ function SearchResults({ category, target, query, conditions, onSelected }: Pick
   const replaceItem = useBuildStore((state) => state.replaceItem)
   const [selectionError, setSelectionError] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const prices = useOffersSummary(search.data?.data.map(({ id }) => id) ?? [])
+  const priceById = new Map(prices.data?.products.map((summary) => [summary.id, summary]))
+  const priceState = (id: number) => searchPriceState(priceById.get(id), prices)
   function select(product: CatalogProduct) {
-    const saved = product.category === category.id && (target.mode === 'add' ? addItem(product) : replaceItem(target.itemId, product))
+    const options = { initialPrice: initialSearchPrice(priceState(product.id)) }
+    const saved = product.category === category.id && (target.mode === 'add' ? addItem(product, options) : replaceItem(target.itemId, product, options))
     if (saved) onSelected(product.name)
     else setSelectionError(true)
   }
@@ -161,6 +167,7 @@ function SearchResults({ category, target, query, conditions, onSelected }: Pick
                 {search.data.data.map((product) => (
                   <li className="search-result" key={product.upstream_key}>
                     <div className="product-info"><p className="product-name">{product.name}</p><p className="product-details">{product.manufacturer ?? 'メーカー情報なし'}</p><p className="product-details">{productSpecSummary(product) || '主要スペック情報なし'}</p></div>
+                    <SearchPrice state={priceState(product.id)} />
                     <button type="button" className="button primary add-product" aria-label={target.mode === 'add' ? `${product.name}を構成に追加` : `${product.name}に置き換える`} onClick={() => select(product)}>
                       {target.mode === 'add' ? <Plus size={15} aria-hidden="true" /> : <ArrowLeftRight size={15} aria-hidden="true" />}{target.mode === 'add' ? '追加' : '置換'}
                     </button>

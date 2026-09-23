@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import { useQuery, type QueryKey } from '@tanstack/react-query'
-import { getCategories, getCategoryFilters, getDynamicFacets, searchProducts } from './client'
+import { getCategories, getCategoryFilters, getDynamicFacets, getProductOffers, getOffersSummary, searchProducts } from './client'
 import { catalogQueryOptions, getCatalogRetryProgressStore } from './query-options'
 import { hasSearchConditions, typedConditions, type SearchConditions } from './filters'
 import type { SearchParams } from './types'
@@ -16,6 +16,26 @@ function useCatalogQuery<T>(key: QueryKey, request: (signal: AbortSignal) => Pro
 
 export function useCatalogCategories() {
   return useCatalogQuery(['catalog', 'categories'], getCategories)
+}
+
+export function useProductOffers(productId: number, enabled: boolean) {
+  // The row owns this observer and passes it to the panel. No second fetch on open.
+  return useQuery({
+    ...catalogQueryOptions(['catalog', 'offers', productId], (signal) => getProductOffers(productId, signal), enabled),
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+}
+
+export const offersSummaryEnabled = import.meta.env.VITE_CATALOG_OFFERS_SUMMARY_ENABLED === 'true'
+
+export function useOffersSummary(productIds: number[]) {
+  const ids = [...new Set(productIds)].sort((a, b) => a - b)
+  const query = useQuery({
+    ...catalogQueryOptions(['catalog', 'offers-summary', ids], (signal) => getOffersSummary(ids, signal), offersSummaryEnabled && ids.length > 0),
+    refetchOnWindowFocus: false,
+  })
+  return { ...query, available: offersSummaryEnabled }
 }
 
 export function useProductSearch(params: SearchParams) {

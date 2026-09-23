@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { categoriesResponseSchema, searchResponseSchema } from './schemas'
+import { productOffersResponseSchema, offersSummaryResponseSchema } from './offers'
 import type { SearchParams } from './types'
 import type { PartCategory } from '../../domain/categories'
 import { conditionsLimitError, dynamicFacetResponseSchema, filtersResponseSchema, hasSearchConditions, typedConditions, type SearchConditions } from './filters'
@@ -71,6 +72,20 @@ async function request<T>(path: string, schema: z.ZodType<T>, signal?: AbortSign
 
 export function getCategories(signal?: AbortSignal) {
   return request('/v1/categories', categoriesResponseSchema, signal)
+}
+
+export async function getProductOffers(productId: number, signal?: AbortSignal) {
+  const result = await request(`/v1/products/${productId}/offers`, productOffersResponseSchema, signal)
+  if (result.product.id !== productId) throw new CatalogError('invalid-response')
+  return result
+}
+
+export async function getOffersSummary(productIds: number[], signal?: AbortSignal) {
+  const result = await request('/v1/products/offers/summary', offersSummaryResponseSchema, signal, { product_ids: productIds })
+  if (result.products.length !== productIds.length || result.products.some(({ id }) => !productIds.includes(id))) {
+    throw new CatalogError('invalid-response')
+  }
+  return result
 }
 
 export async function getCategoryFilters(category: PartCategory, signal?: AbortSignal) {

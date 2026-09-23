@@ -15,8 +15,8 @@ export const BUILD_STORAGE_VERSION = 5
 
 type BuildState = {
   items: BuildItem[]
-  addItem: (product: CatalogProduct) => boolean
-  replaceItem: (id: string, product: CatalogProduct) => boolean
+  addItem: (product: CatalogProduct, options?: { initialPrice: number | null }) => boolean
+  replaceItem: (id: string, product: CatalogProduct, options?: { initialPrice: number | null }) => boolean
   addCustomItem: (input: CustomItemInput) => boolean
   updateItem: (id: string, changes: ItemChanges) => boolean
   renameCustomItem: (id: string, name: string) => boolean
@@ -76,21 +76,21 @@ export function createBuildStore(
   return create<BuildState>()(persist(
     (set, get) => ({
       items: [],
-      addItem: (product) => {
+      addItem: (product, options) => {
         const category = partCategories.find(({ id }) => id === product.category)
         if (!category || (category.cardinality === 'single' && get().items.some((item) => item.kind === 'catalog' && item.category === category.id))) return false
         const item = buildItemSchema.safeParse({
           id: crypto.randomUUID(), kind: 'catalog', category: product.category, product,
-          price: null,
+          price: options?.initialPrice ?? null,
         })
         if (!item.success) return false
         set((state) => ({ items: [...state.items, item.data] }))
         return true
       },
-      replaceItem: (id, product) => {
+      replaceItem: (id, product, options) => {
         const item = get().items.find((item) => item.id === id)
         if (item?.kind !== 'catalog' || item.category !== product.category) return false
-        const replacement = buildItemSchema.safeParse({ ...item, product, price: null })
+        const replacement = buildItemSchema.safeParse({ ...item, product, price: options?.initialPrice ?? null })
         if (!replacement.success) return false
         set((state) => ({ items: state.items.map((item) => item.id === id ? replacement.data : item) }))
         return true

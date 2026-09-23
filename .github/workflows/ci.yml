@@ -29,6 +29,7 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - run: npm run test:offers
       - name: Upload Playwright results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4

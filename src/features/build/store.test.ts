@@ -33,6 +33,26 @@ async function setup(storage: StateStorage) {
 }
 
 describe('build state and persistence', () => {
+  it('copies initial prices only on selection and persists just the existing v5 build fields', async () => {
+    const { storage, data } = memoryStorage()
+    const { store } = await setup(storage)
+    expect(store.getState().addItem(product, { initialPrice: 57629 })).toBe(true)
+    const id = store.getState().items[0].id
+    expect(store.getState().items[0].price).toBe(57629)
+    store.getState().updateItem(id, { price: 59980 })
+    expect(store.getState().items[0].price).toBe(59980)
+    expect(store.getState().replaceItem(id, { ...product, id: 999 }, { initialPrice: 42800 })).toBe(true)
+    expect(store.getState().items[0].price).toBe(42800)
+    const saved = JSON.parse(data.get(BUILD_STORAGE_KEY)!)
+    expect(saved.version).toBe(5)
+    expect(Object.keys(saved.state.items[0]).sort()).toEqual(['category', 'id', 'kind', 'price', 'product'])
+    const { store: restored } = await setup(storage)
+    expect(restored.getState().items[0].price).toBe(42800)
+    store.getState().replaceItem(id, product)
+    expect(store.getState().items[0].price).toBeNull()
+    store.getState().addCustomItem({ name: 'ケーブル', price: 500 })
+    expect(store.getState().items[1]).toMatchObject({ kind: 'custom', price: 500 })
+  })
   it('recalculates power through add, price edit, replace, remove, restore and reset without changing price semantics', async () => {
     const { storage, data } = memoryStorage()
     const { store } = await setup(storage)

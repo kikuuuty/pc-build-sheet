@@ -2,6 +2,12 @@ import type { z } from 'zod'
 import type { catalogCategorySchema, catalogProductSchema, catalogSourceSchema, categoriesResponseSchema, searchResponseSchema } from './schemas'
 import type { PartCategory } from '../../domain/categories'
 import type { SearchConditions } from './filters'
+import type { productOfferSchema, productOffersResponseSchema, offerSummarySchema, offersSummaryResponseSchema } from './offers'
+
+export type ProductOffer = z.infer<typeof productOfferSchema>
+export type ProductOffersResponse = z.infer<typeof productOffersResponseSchema>
+export type OfferSummary = z.infer<typeof offerSummarySchema>
+export type OffersSummaryResponse = z.infer<typeof offersSummaryResponseSchema>
 
 export type CatalogProduct = z.infer<typeof catalogProductSchema>
 export type CatalogSource = z.infer<typeof catalogSourceSchema>

@@ -22,7 +22,7 @@ export function BuildSheet({ onSearch, optionalRefs }: {
         <span>製品名から変更</span>
       </div>
       <div className="sheet-columns" aria-hidden="true">
-        <span>パーツ</span><span className="number-column">価格</span><span />
+        <span>パーツ</span><span className="number-column">価格</span><span>店舗</span><span />
       </div>
       <div className="category-list">
         {mainCategories.map((category, index) => (
