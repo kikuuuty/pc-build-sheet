@@ -24,7 +24,6 @@ export function BuildSummary() {
       </div>
       <p className="summary-note">価格はユーザーが入力した金額です。</p>
       <div className="summary-footer">
-        <p>選んだパーツは、このブラウザに自動保存されます。</p>
         <button type="button" className="text-button reset-button" disabled={!items.length} onClick={() => setConfirming(true)}><RotateCcw size={15} aria-hidden="true" />構成をリセット</button>
       </div>
       {confirming && (

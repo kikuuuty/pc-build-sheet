@@ -18,12 +18,12 @@ export function App() {
     <>
       <header className="app-header">
         <div className="header-inner">
-          <div className="brand"><span className="brand-icon"><Monitor size={22} aria-hidden="true" /></span><div><h1>自作PC構成シート</h1><p>パーツを選んで、シンプルにPC構成を作成</p></div></div>
+          <div className="brand"><span className="brand-icon"><Monitor size={22} aria-hidden="true" /></span><h1>自作PC構成シート</h1></div>
           <span className="save-status">{persistenceIssue ? <AlertCircle size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}{persistenceIssue ? '保存を確認' : 'ブラウザに自動保存'}</span>
         </div>
       </header>
       <main className="app-main">
-        <div className="page-heading"><div><p className="eyebrow">BUILD SHEET</p><h2>マイ構成</h2></div><p>ひとつずつ選んで、理想の1台に。</p></div>
+        <div className="page-heading"><h2>マイ構成</h2></div>
         {persistenceIssue && <p className="storage-warning" role="alert">{persistenceIssue}</p>}
         <div className="workspace">
           <BuildSheet onSearch={setSearch} optionalRefs={optionalRefs} />
