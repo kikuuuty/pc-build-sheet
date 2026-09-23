@@ -9,10 +9,9 @@ type Props = {
   draft: SearchDraft
   errors: Record<string, string>
   onChange: (draft: SearchDraft) => void
-  updating?: boolean
 }
 
-export function FilterPanel({ category, definitions, draft, errors, onChange, updating }: Props) {
+export function FilterPanel({ category, definitions, draft, errors, onChange }: Props) {
   const layout = getFilterLayout(category)
   function renderField(id: string) {
     if (id === 'resolution_preset') return (
@@ -26,7 +25,7 @@ export function FilterPanel({ category, definitions, draft, errors, onChange, up
       </div>
     )
     const definition = definitions.find((definition) => definition.id === id)
-    return definition && <FilterField key={id} {...{ category, definition, draft, onChange, updating }} error={errors[id]} />
+    return definition && <FilterField key={id} {...{ category, definition, draft, onChange }} error={errors[id]} />
   }
   const hasDetails = layout.detail.some((id) => definitions.some((definition) => definition.id === id))
   return (
@@ -40,7 +39,7 @@ export function FilterPanel({ category, definitions, draft, errors, onChange, up
   )
 }
 
-function FilterField({ category, definition, draft, onChange, error, updating }: Omit<Props, 'definitions' | 'errors'> & { definition: UiFilter; error?: string }) {
+function FilterField({ category, definition, draft, onChange, error }: Omit<Props, 'definitions' | 'errors'> & { definition: UiFilter; error?: string }) {
   const id = `filter-${definition.id}`
   if (definition.control === 'range') {
     const value = draft.ranges[definition.id] ?? emptyRange
@@ -77,15 +76,15 @@ function FilterField({ category, definition, draft, onChange, error, updating }:
         aria-invalid={!!message} onChange={(event) => onChange(selectValues(draft, definition.id, event.target.value === '' ? [] : [definition.options[Number(event.target.value)].value]))}>
         <option value="">{definition.options.length ? '指定なし' : '候補なし'}</option>
         {values.length > 0 && !definition.options.some(({ value }) => value === values[0]) && <option value="-1" disabled>利用できない条件</option>}
-        {definition.options.map(({ value }, index) => <option key={value} value={index} disabled={definition.unavailableValues?.includes(value) || (updating && !values.includes(value))}>{optionLabel(definition, value)}{definition.unavailableValues?.includes(value) ? '（現在利用できません）' : ''}</option>)}
+        {definition.options.map(({ value }, index) => <option key={value} value={index} disabled={definition.unavailableValues?.includes(value)}>{optionLabel(definition, value)}{definition.unavailableValues?.includes(value) ? '（現在利用できません）' : ''}</option>)}
       </select>
       {message && <p className="field-error" role="alert">{message}</p>}
     </div>
   )
-  return <MultiSelect {...{ category, definition, draft, onChange, updating }} error={message} />
+  return <MultiSelect {...{ category, definition, draft, onChange }} error={message} />
 }
 
-function MultiSelect({ definition, draft, onChange, error, updating }: Omit<Props, 'definitions' | 'errors'> & { definition: Extract<UiFilter, { control: 'multi_select' }>; error?: string }) {
+function MultiSelect({ definition, draft, onChange, error }: Omit<Props, 'definitions' | 'errors'> & { definition: Extract<UiFilter, { control: 'multi_select' }>; error?: string }) {
   const [query, setQuery] = useState('')
   const details = useRef<HTMLDetailsElement>(null)
   const values = draft.selections[definition.id] ?? []
@@ -111,7 +110,7 @@ function MultiSelect({ definition, draft, onChange, error, updating }: Omit<Prop
               const checked = values.includes(value)
               const next = selectValues(draft, definition.id, checked ? values.filter((selected) => selected !== value) : [...values, value])
               // The global compiler checks limits again before any request is sent.
-              const disabled = !checked && (updating || values.length >= 10 || selectedCount >= 40)
+              const disabled = !checked && (definition.unavailableValues?.includes(value) || values.length >= 10 || selectedCount >= 40)
               return <label className="filter-option" key={`${typeof value}:${value}`}>
                 <input type="checkbox" checked={checked} disabled={disabled} onChange={() => onChange(next)} />
                 <span>{optionLabel(definition, value)}{definition.unavailableValues?.includes(value) && '（現在利用できません）'}</span>

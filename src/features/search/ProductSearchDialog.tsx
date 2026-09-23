@@ -7,10 +7,10 @@ import { productSpecSummary } from '../../domain/product-summary'
 import { Dialog } from '../../components/Dialog'
 import { Attribution } from '../../components/Attribution'
 import { useBuildStore } from '../build/store'
-import { DynamicFacetError, SearchEmpty, SearchError, SearchLoading } from './SearchFeedback'
+import { CatalogRetryStatus, DynamicFacetError, SearchEmpty, SearchError, SearchLoading } from './SearchFeedback'
 import { mergeDynamicFacetOptions } from './dynamic-facets'
 import { useDebouncedValue } from './useDebouncedValue'
-import type { SearchConditions } from '../../api/catalog/filters'
+import { hasSearchConditions, type SearchConditions } from '../../api/catalog/filters'
 import { getUiFilters } from './filter-config'
 import { compileConditions, conditionTags, emptyDraft, useSearchSession } from './filter-state'
 import { FilterPanel } from './FilterPanel'
@@ -36,9 +36,9 @@ export function ProductSearchDialog({ category, target, returnFocus, onClose, on
   const [filtersOpen, setFiltersOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const query = input.trim()
-  // A single timer for all product-search inputs, including the end of IME composition.
-  const signature = JSON.stringify({ draft, composing })
-  const debounced = useDebouncedValue(signature)
+  // Keyword/IME changes have their own timer and never invalidate facet data.
+  const keywordSignature = JSON.stringify({ query, composing })
+  const debouncedKeyword = useDebouncedValue(keywordSignature)
   const categories = useCatalogCategories()
   const available = categories.data?.categories.includes(category.id) ?? false
   const metadata = useCategoryFilters(category.id, available)
@@ -46,17 +46,19 @@ export function ProductSearchDialog({ category, target, returnFocus, onClose, on
   const { conditions, errors } = compileConditions(category.id, definitions, draft)
   const hasFilters = category.id !== 'os'
   const tagCount = conditionTags(definitions, draft).length
-  const waiting = composing || signature !== debounced
   const invalid = Object.keys(errors).length > 0
-  // Independent typed-input timer: keyword/IME edits never invalidate facet data or its key.
-  const facetSignature = JSON.stringify({ selections: draft.selections, ranges: draft.ranges })
-  const debouncedFacets = useDebouncedValue(facetSignature)
-  const facetWaiting = facetSignature !== debouncedFacets
-  // Use CURRENT conditions even while disabled: switching keys detaches/aborts the old query immediately.
-  const dynamic = useDynamicFacets(category.id, conditions, available && !!metadata.data && !invalid && !facetWaiting)
-  const updatingFacets = !invalid && (facetWaiting || dynamic.isPending || dynamic.isFetching)
+  // One committed filter snapshot drives BOTH facets and search. Include raw edits so even
+  // incomplete range input restarts the timer; metadata changes also revalidate the snapshot.
+  const filterSignature = JSON.stringify({ selections: draft.selections, ranges: draft.ranges, conditions })
+  const debouncedFilters = useDebouncedValue(filterSignature)
+  const facetWaiting = filterSignature !== debouncedFilters
+  const committedConditions = (JSON.parse(debouncedFilters) as { conditions: SearchConditions }).conditions
+  const waiting = composing || keywordSignature !== debouncedKeyword || facetWaiting
+  const facetsEnabled = available && !!metadata.data && !invalid && !facetWaiting && hasSearchConditions(committedConditions)
+  const dynamic = useDynamicFacets(category.id, facetsEnabled ? committedConditions : undefined, facetsEnabled)
+  const updatingFacets = !invalid && hasSearchConditions(conditions) && (facetWaiting || dynamic.isFetching)
   const displayDefinitions = mergeDynamicFacetOptions(definitions,
-    !invalid && !facetWaiting && !dynamic.isError ? dynamic.data : undefined, draft.selections)
+    facetsEnabled && !dynamic.isError ? dynamic.data : undefined, draft.selections)
 
   return (
     <Dialog variant="wide" title={`${category.label}を${target.mode === 'replace' ? '変更' : '選択'}`} titleId="search-title" onClose={onClose} initialFocus={inputRef} returnFocus={returnFocus}>
@@ -80,22 +82,25 @@ export function ProductSearchDialog({ category, target, returnFocus, onClose, on
           onCompositionStart={(event) => { if (event.target instanceof HTMLInputElement && event.target.type !== 'search') setComposing(true) }}
           onCompositionEnd={(event) => { if (event.target instanceof HTMLInputElement && event.target.type !== 'search') setComposing(false) }}>
           <h3>絞り込み</h3>
+          {metadata.retryProgress && <CatalogRetryStatus progress={metadata.retryProgress} subject="フィルター取得" compact paused={metadata.isPaused} />}
           {metadata.isError ? <SearchError error={metadata.error} onRetry={() => { void metadata.refetch() }} title="フィルターを取得できませんでした" />
-            : metadata.isPending ? <p className="filter-help">フィルターを読み込んでいます…</p>
+            : metadata.isPending ? !metadata.retryProgress && <p className="filter-help">フィルターを読み込んでいます…</p>
             : <>
-              {updatingFacets && <p className="filter-help">候補を更新しています…</p>}
-              {!facetWaiting && dynamic.isError && <DynamicFacetError error={dynamic.error} onRetry={() => { void dynamic.refetch() }} />}
-              <FilterPanel category={category.id} definitions={displayDefinitions} draft={draft} errors={errors} onChange={setDraft} updating={updatingFacets} />
+              {facetsEnabled && dynamic.retryProgress ? <CatalogRetryStatus progress={dynamic.retryProgress} subject="絞り込み候補の更新" compact paused={dynamic.isPaused} />
+                : updatingFacets && <p className="filter-help">候補を更新しています…</p>}
+              {facetsEnabled && dynamic.isError && <DynamicFacetError error={dynamic.error} onRetry={() => { void dynamic.refetch() }} />}
+              <FilterPanel category={category.id} definitions={displayDefinitions} draft={draft} errors={errors} onChange={setDraft} />
             </>}
         </aside>}
         <div className="search-results-pane">
-          {categories.isPending ? <div className="search-body"><SearchLoading /></div>
+          {categories.retryProgress && <CatalogRetryStatus progress={categories.retryProgress} subject="カテゴリ取得" paused={categories.isPaused} />}
+          {categories.isPending ? !categories.retryProgress && <div className="search-body"><SearchLoading label="カテゴリを読み込んでいます…" /></div>
             : categories.isError ? <div className="search-body"><SearchError error={categories.error} onRetry={() => { void categories.refetch() }} /></div>
             : !categories.data.categories.includes(category.id) ? <div className="search-body"><p className="search-state">このカテゴリは現在カタログで利用できません。</p></div>
             : waiting ? <div className="search-body"><SearchLoading waiting /></div>
             : tagCount > 0 && !metadata.data ? <div className="search-body"><p className="search-state">フィルターの取得後に検索します。条件を解除するとキーワードのみで検索できます。</p></div>
             : invalid ? <div className="search-body"><p className="search-state" role="alert">検索条件を確認してください。{Object.values(errors).join(' ')}</p></div>
-            : <SearchResults key={`${category.id}:${debounced}`} category={category} target={target} query={query} conditions={conditions} onSelected={onSelected} />}
+            : <SearchResults key={`${category.id}:${debouncedKeyword}:${debouncedFilters}`} category={category} target={target} query={query} conditions={committedConditions} onSelected={onSelected} />}
         </div>
       </div>
     </Dialog>
@@ -145,9 +150,10 @@ function SearchResults({ category, target, query, conditions, onSelected }: Pick
 
   return (
     <>
-      <div className="search-body" ref={scrollRef} aria-busy={search.isFetching}>
+      <div className="search-body" ref={scrollRef} aria-busy={search.isFetching && search.retryProgress?.phase !== 'waiting'}>
         {selectionError && <p className="field-error" role="alert">構成が変更されたため選択を反映できませんでした。閉じて構成を確認してください。</p>}
-        {search.isPending ? <SearchLoading /> : search.isError ? <SearchError error={search.error} onRetry={() => { void search.refetch() }} /> : (
+        {search.retryProgress && <CatalogRetryStatus progress={search.retryProgress} subject="製品検索" paused={search.isPaused} />}
+        {search.isPending ? !search.retryProgress && <SearchLoading /> : search.isError ? <SearchError error={search.error} onRetry={() => { void search.refetch() }} /> : (
           <>
             <div className="search-result-count" role="status"><span>{query ? `「${query}」の検索結果` : `${category.label}の製品一覧`}</span><span>{search.data.meta.returned}件表示</span></div>
             {search.data.data.length === 0 ? <SearchEmpty /> : (

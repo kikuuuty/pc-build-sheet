@@ -1,46 +1,34 @@
-import { useQuery } from '@tanstack/react-query'
-import { catalogRetryDelay, getCategories, getCategoryFilters, getDynamicFacets, searchProducts, shouldRetryCatalogRequest } from './client'
-import { typedConditions, type SearchConditions } from './filters'
+import { useSyncExternalStore } from 'react'
+import { useQuery, type QueryKey } from '@tanstack/react-query'
+import { getCategories, getCategoryFilters, getDynamicFacets, searchProducts } from './client'
+import { catalogQueryOptions, getCatalogRetryProgressStore } from './query-options'
+import { hasSearchConditions, typedConditions, type SearchConditions } from './filters'
 import type { SearchParams } from './types'
 import type { PartCategory } from '../../domain/categories'
 
-const queryPolicy = {
-  staleTime: 60_000,
-  retry: shouldRetryCatalogRequest,
-  retryDelay: catalogRetryDelay,
+function useCatalogQuery<T>(key: QueryKey, request: (signal: AbortSignal) => Promise<T>, enabled = true) {
+  const query = useQuery(catalogQueryOptions(key, request, enabled))
+  const store = getCatalogRetryProgressStore(query.failureReason)
+  const progress = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
+  // Success, terminal errors and cancellation end the automatic retry lifecycle.
+  return { ...query, retryProgress: enabled && query.fetchStatus !== 'idle' ? progress : null }
 }
 
 export function useCatalogCategories() {
-  return useQuery({
-    queryKey: ['catalog', 'categories'],
-    queryFn: ({ signal }) => getCategories(signal),
-    ...queryPolicy,
-  })
+  return useCatalogQuery(['catalog', 'categories'], getCategories)
 }
 
 export function useProductSearch(params: SearchParams) {
-  return useQuery({
-    queryKey: ['catalog', 'search', params],
-    queryFn: ({ signal }) => searchProducts(params, signal),
-    ...queryPolicy,
-  })
+  return useCatalogQuery(['catalog', 'search', params], (signal) => searchProducts(params, signal))
 }
 
 export function useCategoryFilters(category: PartCategory, enabled: boolean) {
-  return useQuery({
-    queryKey: ['catalog', 'filters', category],
-    queryFn: ({ signal }) => getCategoryFilters(category, signal),
-    enabled: enabled && category !== 'os',
-    ...queryPolicy,
-  })
+  return useCatalogQuery(['catalog', 'filters', category], (signal) => getCategoryFilters(category, signal), enabled && category !== 'os')
 }
 
-export function useDynamicFacets(category: PartCategory, conditions: SearchConditions, enabled: boolean) {
-  const typed = typedConditions(conditions)
-  return useQuery({
-    queryKey: ['catalog', 'facets', category, typed],
-    queryFn: ({ signal }) => getDynamicFacets(category, typed, signal),
-    enabled: enabled && category !== 'os',
-    ...queryPolicy,
-  })
+export function useDynamicFacets(category: PartCategory, conditions: SearchConditions | undefined, enabled: boolean) {
+  // No committed conditions while editing: detach from the old key immediately so its signal aborts.
+  const typed = typedConditions(conditions ?? {})
+  return useCatalogQuery(['catalog', 'facets', category, typed], (signal) => getDynamicFacets(category, typed, signal),
+    enabled && category !== 'os' && hasSearchConditions(typed))
 }

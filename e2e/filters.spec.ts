@@ -64,7 +64,7 @@ async function selectCheck(page: Page, label: string, value: string) {
   await page.getByRole('group', { name: label, exact: true }).getByRole('checkbox', { name: value, exact: true }).check()
 }
 
-test('one shared 300ms timer, IME, range errors and numeric zero', async ({ page }) => {
+test('300ms keyword and shared filter debounce, IME, range errors and numeric zero', async ({ page }) => {
   const requests = await mock(page)
   // Install before mounting hooks so cleanup never mixes native and fake timer IDs.
   await page.clock.install()
@@ -228,7 +228,7 @@ test('metadata failures do not block keyword search; retry and empty controls ar
   let attempts = 0
   await page.route(`${api}/v1/categories/cpu/filters`, (route) => {
     attempts++
-    return attempts === 1 ? route.fulfill({ status: 429, headers: { 'Retry-After': '1' }, json: {} })
+    return attempts <= 2 ? route.fulfill({ status: 429, headers: { 'Retry-After': '1' }, json: {} })
       : route.fulfill({ json: { category: 'cpu', filters: [selection('manufacturer', 'メーカー', []), { ...range('core_count', 'コア数', true), range: null }] } })
   })
   await page.goto('/')
@@ -242,7 +242,7 @@ test('metadata failures do not block keyword search; retry and empty controls ar
   await expect(page.locator('summary[aria-label="メーカーを選択"]')).toContainText('候補なし')
   await page.locator('.advanced-filters > summary').click()
   await expect(page.getByRole('textbox', { name: 'コア数の最小値' })).toBeDisabled()
-  expect(attempts).toBe(2)
+  expect(attempts).toBe(3)
 })
 
 test('changing a filter and closing the dialog abort pending POST searches', async ({ page }) => {
@@ -288,6 +288,67 @@ async function expandCandidates(page: Page, label: string) {
   return page.getByRole('group', { name: label, exact: true })
 }
 
+test('zero conditions and keyword-only edits use static metadata; clearing restores it without facets', async ({ page }) => {
+  const requests = await mock(page, [], true)
+  await page.clock.install()
+  await page.goto('/')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await openFilters(page)
+  const sockets = await expandCandidates(page, 'ソケット')
+  await expect(sockets.getByRole('checkbox')).toHaveCount(4)
+  await expect(page.getByText('Test cpu page 1', { exact: true })).toBeVisible()
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+  expect(requests.facetRequests).toHaveLength(0)
+  const keyword = page.getByRole('textbox', { name: '製品名・型番で検索' })
+  await keyword.fill('ryzen')
+  await page.clock.runFor(299)
+  expect(requests).toHaveLength(1)
+  await page.clock.runFor(1)
+  await expect.poll(() => requests.length).toBe(2)
+  expect(requests.facetRequests).toHaveLength(0)
+
+  await selectCheck(page, 'メーカー', 'Intel')
+  await page.clock.runFor(299)
+  expect(requests.facetRequests).toHaveLength(0)
+  await page.clock.runFor(1)
+  await expect.poll(() => requests.facetRequests.length).toBe(1)
+  expect(requests.facetRequests[0]).toEqual({ filters: { manufacturer: ['Intel'] } })
+  await expect.poll(async () => { await page.clock.runFor(50); return sockets.getByRole('checkbox').count() }).toBe(2)
+  await page.getByRole('button', { name: 'フィルターをすべて解除' }).click()
+  await expect(sockets.getByRole('checkbox')).toHaveCount(4)
+  await expect(page.getByText('候補を更新しています…', { exact: true })).toHaveCount(0)
+  await page.clock.runFor(1000)
+  await expect(page.getByRole('dialog').getByRole('status')).toContainText('「ryzen」の検索結果')
+  expect(requests.facetRequests).toHaveLength(1)
+  // The zero-condition keyword query is still fresh in React Query's cache.
+  expect(requests).toHaveLength(3)
+})
+
+test('rapid filter edits send only final conditions once to both facets and search', async ({ page }) => {
+  const requests = await mock(page, [], true)
+  await page.clock.install()
+  await page.goto('/')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await openFilters(page)
+  await expect(page.getByText('Test cpu page 1', { exact: true })).toBeVisible()
+  await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+  await selectCheck(page, 'メーカー', 'AMD')
+  await page.clock.runFor(200)
+  await selectCheck(page, 'ソケット', 'AM5')
+  await page.clock.runFor(299)
+  expect(requests.facetRequests).toHaveLength(0)
+  expect(requests).toHaveLength(1)
+  await page.clock.runFor(1)
+  await expect.poll(() => requests.facetRequests.length).toBe(1)
+  await expect.poll(() => requests.length).toBe(2)
+  const conditions = { filters: { manufacturer: ['AMD'], socket: ['AM5'] } }
+  expect(requests.facetRequests).toEqual([conditions])
+  expect(requests[1]).toEqual({ category: 'cpu', limit: 20, ...conditions })
+  await page.clock.runFor(1000)
+  expect(requests.facetRequests).toHaveLength(1)
+  expect(requests).toHaveLength(2)
+})
+
 test('dynamic CPU candidates follow manufacturer, preserve self-exclusion, and ignore keyword', async ({ page }) => {
   const requests = await mock(page, [], true)
   await page.goto('/')
@@ -303,7 +364,7 @@ test('dynamic CPU candidates follow manufacturer, preserve self-exclusion, and i
   await expect(families.getByRole('checkbox', { name: 'Core i7', exact: true })).toBeEnabled()
   await selectCheck(page, 'ソケット', 'LGA1700')
   await expect(sockets.getByRole('checkbox', { name: 'LGA1851', exact: true })).toBeEnabled()
-  expect(requests.facetRequests.at(-1)).toEqual({ filters: { manufacturer: ['Intel'], socket: ['LGA1700'] } })
+  await expect.poll(() => requests.facetRequests.at(-1)).toEqual({ filters: { manufacturer: ['Intel'], socket: ['LGA1700'] } })
   const count = requests.facetRequests.length
   await page.getByRole('textbox', { name: '製品名・型番で検索' }).fill('9800X3D')
   await expect.poll(() => requests.at(-1)?.keyword).toBe('9800X3D')
@@ -343,7 +404,7 @@ test('contradictory selection survives fallback recovery, remains in search and 
   await expect(sockets.getByRole('checkbox', { name: 'LGA1851', exact: true })).toBeEnabled()
 })
 
-test('facet debounce blocks stale additions, aborts Intel, and never applies its late response to AMD', async ({ page }) => {
+test('facet debounce allows additions, aborts Intel, and never applies its late response to AMD', async ({ page }) => {
   const requests = await mock(page, [], true)
   await page.clock.install()
   let release!: () => void
@@ -370,16 +431,20 @@ test('facet debounce blocks stale additions, aborts Intel, and never applies its
   const before = requests.facetRequests.length
   await selectCheck(page, 'メーカー', 'Intel')
   const sockets = await expandCandidates(page, 'ソケット')
-  await expect(sockets.getByRole('checkbox', { name: 'AM5', exact: true })).toBeDisabled()
+  await expect(sockets.getByRole('checkbox', { name: 'AM5', exact: true })).toBeEnabled()
   await page.clock.runFor(299)
   expect(started).toBe(false)
   expect(requests.facetRequests).toHaveLength(before)
   await page.clock.runFor(1)
   await expect.poll(() => started).toBe(true)
-  // Clearing remains possible while the old request is held. After debounce the initial cache is reused.
-  await page.getByRole('checkbox', { name: 'Intel', exact: true }).uncheck()
+  // New selections, including single-select controls, remain available during the held request.
+  await page.locator('.advanced-filters > summary').click()
+  await expect(page.getByLabel('クーラー付属', { exact: true }).getByRole('option', { name: 'なし', exact: true })).toBeEnabled()
+  await sockets.getByRole('checkbox', { name: 'LGA1700', exact: true }).check()
   await expect.poll(() => aborted).toBe(true)
+  await page.getByRole('button', { name: 'フィルターをすべて解除' }).click()
   await page.clock.runFor(300)
+  expect(requests.facetRequests).toHaveLength(before)
   await selectCheck(page, 'メーカー', 'AMD')
   await page.clock.runFor(300)
   await expect.poll(async () => { await page.clock.runFor(50); return page.getByText('候補を更新しています…', { exact: true }).count() }).toBe(0)
@@ -401,11 +466,11 @@ test('dynamic 429 fallback keeps static choices and search, respects Retry-After
   await page.goto('/')
   await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
   await openFilters(page)
+  await selectCheck(page, 'メーカー', 'Intel')
   const fallback = page.getByText('絞り込み候補を更新できませんでした。カテゴリ全体の候補を表示しています。')
   await expect(fallback).toBeVisible()
+  expect(attempts).toBe(2)
   await expect(page.getByRole('button', { name: /秒後に候補を再試行できます/ })).toBeDisabled()
-  await selectCheck(page, 'メーカー', 'Intel')
-  await expect(fallback).toBeVisible()
   const sockets = await expandCandidates(page, 'ソケット')
   await expect(sockets.getByRole('checkbox', { name: 'AM5', exact: true })).toBeEnabled()
   await expect(page.getByText('Test cpu page 1', { exact: true })).toBeVisible()
@@ -429,6 +494,7 @@ for (const failure of ['network', 'invalid-response', '503'] as const) {
     await page.goto('/')
     await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
     await openFilters(page)
+    await selectCheck(page, 'メーカー', 'Intel')
     await expect(page.getByText('絞り込み候補を更新できませんでした。カテゴリ全体の候補を表示しています。')).toBeVisible()
     const sockets = await expandCandidates(page, 'ソケット')
     await expect(sockets.getByRole('checkbox', { name: 'AM5', exact: true })).toBeEnabled()
@@ -461,3 +527,157 @@ test('an incompatible boolean stays selected and can be cleared to unspecified',
   await expect.poll(() => requests.at(-1)?.filters).toEqual({ manufacturer: ['Intel'] })
   await expect(cooler).toHaveValue('')
 })
+
+function deferredResponse() {
+  let release!: () => void
+  const ready = new Promise<void>((resolve) => { release = resolve })
+  return { ready, release }
+}
+
+const retryTargets = [
+  { id: 'search', path: '/v1/search**', subject: '製品検索', loading: '製品を検索しています…' },
+  { id: 'facets', path: '/v1/categories/cpu/facets', subject: '絞り込み候補の更新', loading: '候補を更新しています…' },
+  { id: 'metadata', path: '/v1/categories/cpu/filters', subject: 'フィルター取得', loading: 'フィルターを読み込んでいます…' },
+  { id: 'categories', path: '/v1/categories', subject: 'カテゴリ取得', loading: 'カテゴリを読み込んでいます…' },
+] as const
+const rateLimitHeaders = { 'Retry-After': '30', 'Access-Control-Expose-Headers': 'Retry-After' }
+
+for (const target of retryTargets) {
+  test(`${target.id}: distinguishes loading, rate-limit countdown and actual retry, then clears on success`, async ({ page }) => {
+    await mock(page, [], true)
+    await page.clock.install()
+    const first = deferredResponse()
+    const retry = deferredResponse()
+    let attempts = 0
+    await page.route(`${api}${target.path}`, async (route) => {
+      if (route.request().method() === 'OPTIONS') return route.fallback()
+      attempts++
+      if (attempts === 1) {
+        await first.ready
+        return route.fulfill({ status: 429, headers: rateLimitHeaders, json: {} })
+      }
+      await retry.ready
+      return route.fallback()
+    })
+    await page.goto('/')
+    await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+    await openFilters(page)
+    if (target.id === 'facets') await selectCheck(page, 'メーカー', 'Intel')
+    await expect.poll(() => attempts).toBe(1)
+    await expect(page.getByText(target.loading, { exact: true })).toBeVisible()
+    const status = page.getByRole('status', { name: `${target.subject}の再試行状況` })
+    await expect(status).toHaveCount(0)
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+
+    first.release()
+    // Flush React Query's batched notifications as well as the countdown's timer.
+    await expect.poll(async () => { await page.clock.runFor(50); return status.count() }).toBe(1)
+    await expect(status).toContainText('APIの利用制限に達しています。あと30秒で自動再試行します。')
+    await expect(status.locator('.spinner')).toHaveCount(0)
+    await expect(page.getByText(target.loading, { exact: true })).toHaveCount(0)
+    if (target.id === 'facets' || target.id === 'metadata') {
+      await expect(page.getByText('Test cpu page 1', { exact: true })).toBeVisible()
+      await expect(page.getByRole('status', { name: '製品検索の再試行状況' })).toHaveCount(0)
+    }
+    if (target.id === 'facets') {
+      const sockets = await expandCandidates(page, 'ソケット')
+      await expect(sockets.getByRole('checkbox', { name: 'LGA1700', exact: true })).toBeEnabled()
+    }
+    await page.clock.runFor(1000)
+    await expect(status).toContainText('あと29秒で自動再試行します。')
+    await page.clock.runFor(28_000)
+    expect(attempts).toBe(1)
+    await expect(status).not.toContainText('自動再試行しています…')
+    await page.clock.runFor(1000)
+    await expect.poll(() => attempts).toBe(2)
+    await expect(status).toContainText('自動再試行しています…')
+    await expect(status).not.toContainText('あと')
+    await expect(status.locator('.spinner')).toHaveCount(1)
+    await page.clock.runFor(1000)
+    await expect(status).toContainText('自動再試行しています…')
+
+    retry.release()
+    await expect.poll(async () => { await page.clock.runFor(50); return status.count() }).toBe(0)
+    await expect.poll(async () => { await page.clock.runFor(50); return page.getByText('Test cpu page 1', { exact: true }).count() }).toBe(1)
+    expect(attempts).toBe(2)
+    await expect(page.getByText(target.loading, { exact: true })).toHaveCount(0)
+  })
+}
+
+for (const target of retryTargets.filter(({ id }) => id === 'search' || id === 'facets')) {
+  for (const longWait of [false, true]) {
+    test(`${target.id}: ${longWait ? 'over-60s wait' : 'exhausted retry'} shows the final error without automatic retry status`, async ({ page }) => {
+      await mock(page)
+      await page.clock.install()
+      const first = deferredResponse()
+      let attempts = 0
+      await page.route(`${api}${target.path}`, async (route) => {
+        if (route.request().method() === 'OPTIONS') return route.fallback()
+        attempts++
+        await first.ready
+        return route.fulfill({ status: 429, headers: { ...rateLimitHeaders, 'Retry-After': longWait ? '61' : '30' }, json: {} })
+      })
+      await page.goto('/')
+      await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+      await openFilters(page)
+      if (target.id === 'facets') await selectCheck(page, 'メーカー', 'Intel')
+      await expect.poll(() => attempts).toBe(1)
+      await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+      first.release()
+      const status = page.getByRole('status', { name: `${target.subject}の再試行状況` })
+      if (!longWait) {
+        await expect.poll(async () => { await page.clock.runFor(50); return status.count() }).toBe(1)
+        await page.clock.runFor(30_000)
+      }
+      const error = page.getByRole('alert').filter({ hasText: target.id === 'search' ? '検索が混み合っています' : '絞り込み候補を更新できませんでした' })
+      await expect.poll(async () => { await page.clock.runFor(50); return error.count() }).toBe(1)
+      await expect(status).toHaveCount(0)
+      await expect(page.getByText(target.loading, { exact: true })).toHaveCount(0)
+      await expect(error.getByRole('button', { name: /秒後に.*再試行できます/ })).toBeDisabled()
+      await page.clock.runFor(120_000)
+      expect(attempts).toBe(longWait ? 1 : 2)
+      await expect(status).toHaveCount(0)
+      await expect(error.getByRole('button')).toBeEnabled()
+    })
+  }
+}
+
+for (const cancel of ['clear filters', 'close dialog'] as const) {
+  test(`${cancel} cancels both rate-limit waits, removes notices and does not reuse stale retry state`, async ({ page }) => {
+    await mock(page, [], true)
+    await page.clock.install()
+    const attempts = { search: 0, facets: 0 }
+    for (const endpoint of ['search', 'facets'] as const) {
+      await page.route(`${api}${endpoint === 'search' ? '/v1/search' : '/v1/categories/cpu/facets'}`, (route) => {
+        if (route.request().method() !== 'POST') return route.fallback()
+        attempts[endpoint]++
+        return attempts[endpoint] === 1 ? route.fulfill({ status: 429, headers: rateLimitHeaders, json: {} }) : route.fallback()
+      })
+    }
+    await page.goto('/')
+    await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+    await openFilters(page)
+    await expect(page.getByText('Test cpu page 1', { exact: true })).toBeVisible()
+    await page.clock.pauseAt(await page.evaluate(() => Date.now() + 1000))
+    await selectCheck(page, 'メーカー', 'Intel')
+    await page.clock.runFor(300)
+    const statuses = page.getByRole('status', { name: /の再試行状況$/ })
+    await expect.poll(async () => { await page.clock.runFor(50); return statuses.count() }).toBe(2)
+    if (cancel === 'clear filters') await page.getByRole('button', { name: 'フィルターをすべて解除' }).click()
+    else await page.getByRole('button', { name: '閉じる', exact: true }).click()
+    await expect(statuses).toHaveCount(0)
+    await page.clock.runFor(31_000)
+    expect(attempts).toEqual({ search: 1, facets: 1 })
+    if (cancel === 'clear filters') {
+      await expect(page.getByText('Test cpu page 1', { exact: true })).toBeVisible()
+      await selectCheck(page, 'メーカー', 'Intel')
+      await page.clock.runFor(300)
+    } else {
+      await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+      await openFilters(page)
+    }
+    await expect.poll(() => attempts).toEqual({ search: 2, facets: 2 })
+    await expect.poll(async () => { await page.clock.runFor(50); return page.getByText('Test cpu page 1', { exact: true }).count() }).toBe(1)
+    await expect(statuses).toHaveCount(0)
+  })
+}

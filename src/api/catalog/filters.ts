@@ -65,6 +65,10 @@ export function typedConditions({ filters, ranges, facets }: SearchConditions): 
   }
 }
 
+export function hasSearchConditions(conditions: SearchConditions): boolean {
+  return Object.keys(typedConditions(conditions)).length > 0
+}
+
 export function conditionsLimitError(conditions: SearchConditions): string | undefined {
   const filters = Object.values(conditions.filters ?? {})
   const ranges = Object.values(conditions.ranges ?? {})

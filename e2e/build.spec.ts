@@ -703,7 +703,7 @@ test('displays HTTP errors, retries manually and respects Retry-After', async ({
   let attempts = 0
   await page.route(`${api}/v1/search?**`, (route) => {
     attempts++
-    return attempts === 1
+    return attempts <= 2
       ? route.fulfill({ status: 429, headers: { 'Retry-After': '2', 'Access-Control-Allow-Origin': '*', 'Access-Control-Expose-Headers': 'Retry-After' }, json: { error: { message: 'DO NOT DISPLAY RAW ERROR' } } })
       : route.fulfill({ json: searchResponse(route.request().url()) })
   })
@@ -714,7 +714,7 @@ test('displays HTTP errors, retries manually and respects Retry-After', async ({
   await expect(page.getByText('DO NOT DISPLAY RAW ERROR')).toHaveCount(0)
   await page.getByRole('button', { name: '再試行', exact: true }).click()
   await expect(page.getByRole('dialog').getByText(productName, { exact: true })).toBeVisible()
-  expect(attempts).toBe(2)
+  expect(attempts).toBe(3)
 })
 
 test('invalid API responses are an error rather than an empty catalog', async ({ page }) => {

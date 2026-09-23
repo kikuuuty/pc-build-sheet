@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { conditionsLimitError, dynamicFacetResponseSchema, filtersResponseSchema, typedConditions } from './filters'
+import { conditionsLimitError, dynamicFacetResponseSchema, filtersResponseSchema, hasSearchConditions, typedConditions } from './filters'
 import { cpuFilters, range, selection } from '../../test/filter-fixtures'
 
 describe('filter metadata boundary', () => {
@@ -29,6 +29,15 @@ describe('filter metadata boundary', () => {
 })
 
 describe('dynamic facet boundary', () => {
+  it('detects any typed condition, including numeric zero, but ignores keywords and empty groups', () => {
+    expect(hasSearchConditions({})).toBe(false)
+    expect(hasSearchConditions({ filters: {}, ranges: {}, facets: {} })).toBe(false)
+    const keywordOnly = { keyword: 'ryzen', filters: {} }
+    expect(hasSearchConditions(keywordOnly)).toBe(false)
+    expect(hasSearchConditions({ filters: { includes_cooler: [0] } })).toBe(true)
+    expect(hasSearchConditions({ ranges: { core_count: { min: 0 } } })).toBe(true)
+    expect(hasSearchConditions({ facets: { socket: ['AM5'] } })).toBe(true)
+  })
   const option = { value: 'LGA 1700', label: 'LGA 1700', count: 30 }
   const payload = (options: unknown[]) => ({ category: 'cpu', facets: { socket: { options } } })
   it('preserves counts, value types and exact whitespace; accepts empty candidates', () => {

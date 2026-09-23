@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { categoriesResponseSchema, searchResponseSchema } from './schemas'
 import type { SearchParams } from './types'
 import type { PartCategory } from '../../domain/categories'
-import { conditionsLimitError, dynamicFacetResponseSchema, filtersResponseSchema, typedConditions, type SearchConditions } from './filters'
+import { conditionsLimitError, dynamicFacetResponseSchema, filtersResponseSchema, hasSearchConditions, typedConditions, type SearchConditions } from './filters'
 
 export const CATALOG_BASE_URL = 'https://pc-parts-catalog.kikuuuty.workers.dev'
 export const SEARCH_PAGE_SIZE = 20
@@ -98,7 +98,7 @@ export async function searchProducts(search: SearchParams, signal?: AbortSignal)
   } else if (search.cursor !== undefined) params.set('cursor', search.cursor)
   const conditions = search.conditions ?? {}
   if (conditionsLimitError(conditions)) throw new CatalogError('http', { status: 400 })
-  const advanced = Object.values(conditions).some((fields) => Object.keys(fields).length > 0)
+  const advanced = hasSearchConditions(conditions)
   const result = advanced
     ? await request('/v1/search', searchResponseSchema, signal, {
       category, limit: SEARCH_PAGE_SIZE, ...conditions,
@@ -118,7 +118,7 @@ export async function searchProducts(search: SearchParams, signal?: AbortSignal)
 export function shouldRetryCatalogRequest(failureCount: number, error: Error) {
   if (!(error instanceof CatalogError) || failureCount >= 1 || error.retryAt - Date.now() > 60_000) return false
   return error.kind === 'network' || error.kind === 'timeout'
-    || (error.status !== undefined && [502, 503, 504].includes(error.status))
+    || (error.status !== undefined && [429, 502, 503, 504].includes(error.status))
 }
 
 export function catalogRetryDelay(attempt: number, error: Error) {

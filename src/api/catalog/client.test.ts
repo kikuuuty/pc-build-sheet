@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { QueryClient } from '@tanstack/react-query'
 import fixture from '../../test/fixtures/cpu-search.json'
 import listingFixture from '../../test/fixtures/cpu-listing.json'
 import categories from '../../test/fixtures/categories.json'
@@ -9,7 +10,7 @@ import { optionalCategories } from '../../domain/categories'
 import { optionalProduct } from '../../test/optional-products'
 
 const listing = { ...listingFixture, meta: { ...listingFixture.meta, limit: 20 } }
-afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('catalog client', () => {
   it('POSTs only typed conditions to facets, omits credentials and forwards cancellation', async () => {
@@ -34,7 +35,7 @@ describe('catalog client', () => {
     const error = await getDynamicFacets('cpu', {}).catch((error: Error) => error) as CatalogError
     expect(error).toMatchObject({ kind: 'http', status, requestId: 'facet-id' })
     expect(catalogRetryDelay(0, error)).toBeGreaterThan(29_000)
-    expect(shouldRetryCatalogRequest(0, error)).toBe([502, 503, 504].includes(status))
+    expect(shouldRetryCatalogRequest(0, error)).toBe([429, 502, 503, 504].includes(status))
   })
   it('honors HTTP-date Retry-After on facets', async () => {
     const date = new Date(Date.now() + 30_000).toUTCString()
@@ -225,8 +226,96 @@ describe('catalog client', () => {
     expect(shouldRetryCatalogRequest(0, error)).toBe(true)
     expect(shouldRetryCatalogRequest(1, error)).toBe(false)
     expect(catalogRetryDelay(0, error)).toBeGreaterThan(29_000)
-    for (const status of [400, 404, 429, 500]) expect(shouldRetryCatalogRequest(0, new CatalogError('http', { status }))).toBe(false)
+    for (const status of [400, 404, 500]) expect(shouldRetryCatalogRequest(0, new CatalogError('http', { status }))).toBe(false)
     expect(shouldRetryCatalogRequest(0, new CatalogError('invalid-response'))).toBe(false)
     expect(shouldRetryCatalogRequest(0, new CatalogError('http', { status: 503, retryAt: Date.now() + 120_000 }))).toBe(false)
+  })
+})
+
+describe('React Query retry scheduling', () => {
+  function client() {
+    return new QueryClient({ defaultOptions: { queries: {
+      retry: shouldRetryCatalogRequest, retryDelay: catalogRetryDelay, gcTime: Infinity,
+    } } })
+  }
+
+  for (const endpoint of ['facets', 'search'] as const) {
+    for (const header of ['seconds', 'HTTP-date'] as const) {
+      it.each([false, true])(`${endpoint}: waits for ${header} Retry-After and retries once (repeat 429: %s)`, async (repeat) => {
+        vi.useFakeTimers()
+        vi.setSystemTime(new Date('2026-09-23T00:00:00Z'))
+        const retryAfter = header === 'seconds' ? '30' : new Date(Date.now() + 30_000).toUTCString()
+        const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
+          fetchMock.mock.calls.length === 1 || repeat
+            ? new Response('', { status: 429, headers: { 'Retry-After': retryAfter } })
+            : Response.json(endpoint === 'facets' ? cpuFacets() : listing)))
+        vi.stubGlobal('fetch', fetchMock)
+        const queryClient = client()
+        const pending = queryClient.fetchQuery({
+          queryKey: [endpoint],
+          queryFn: async ({ signal }) => endpoint === 'facets'
+            ? getDynamicFacets('cpu', { filters: { manufacturer: ['AMD'] } }, signal)
+            : searchProducts({ category: 'cpu', mode: 'listing' }, signal),
+        }).then((data) => ({ data }), (error: CatalogError) => ({ error }))
+        await vi.advanceTimersByTimeAsync(0)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(29_999)
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+        await vi.advanceTimersByTimeAsync(1)
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        expect(await pending).toMatchObject(repeat ? { error: { status: 429 } } : { data: endpoint === 'facets' ? cpuFacets() : listing })
+        await vi.advanceTimersByTimeAsync(120_000)
+        expect(fetchMock).toHaveBeenCalledTimes(2)
+        queryClient.clear()
+      })
+    }
+  }
+
+  it('surfaces 429 immediately when Retry-After exceeds 60 seconds', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('', { status: 429, headers: { 'Retry-After': '61' } })))
+    vi.stubGlobal('fetch', fetchMock)
+    const queryClient = client()
+    await expect(queryClient.fetchQuery({ queryKey: ['long-wait'], queryFn: ({ signal }) => getDynamicFacets('cpu', {}, signal) }))
+      .rejects.toMatchObject({ status: 429 })
+    await vi.advanceTimersByTimeAsync(120_000)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(shouldRetryCatalogRequest(0, new CatalogError('http', { status: 429, retryAt: Date.now() + 60_000 }))).toBe(true)
+    queryClient.clear()
+  })
+
+  it.each([null, 'invalid'])('backs off instead of immediately retrying 429 with Retry-After=%s', async (header) => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('', {
+      status: 429, headers: header ? { 'Retry-After': header } : {},
+    })))
+    vi.stubGlobal('fetch', fetchMock)
+    const queryClient = client()
+    const pending = queryClient.fetchQuery({ queryKey: ['backoff'], queryFn: () => getCategories() }).catch((error: CatalogError) => error)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await pending).toMatchObject({ status: 429 })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    queryClient.clear()
+  })
+
+  it.each([
+    new CatalogError('network'), new CatalogError('timeout'),
+    ...[502, 503, 504].map((status) => new CatalogError('http', { status })),
+  ])('preserves one backoff retry for transient $kind/$status failures', async (error) => {
+    vi.useFakeTimers()
+    vi.spyOn(Math, 'random').mockReturnValue(0)
+    const queryClient = client()
+    const queryFn = vi.fn().mockRejectedValue(error)
+    const pending = queryClient.fetchQuery({ queryKey: ['transient'], queryFn }).catch((caught: Error) => caught)
+    await vi.advanceTimersByTimeAsync(999)
+    expect(queryFn).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(await pending).toBe(error)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(queryFn).toHaveBeenCalledTimes(2)
+    queryClient.clear()
   })
 })
