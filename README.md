@@ -30,25 +30,24 @@ PSU自体、ケース、サーマルペースト、OS、周辺機器、ノート
 ## 技術スタック
 
 - React / TypeScript / Vite
-- TanStack Query：カテゴリ・製品検索のサーバーステート
+- TanStack Query：カテゴリ・製品検索・Pricing summaryのサーバーステート
 - Zustand + persist：構成のクライアントステート・localStorage保存
 - Zod：APIレスポンスと保存データの境界検証
 - Lucide React / 通常CSS（UIフレームワークなし）
 - Vitest / Playwright
 
-## Yahoo!ショッピング価格比較
+## Gatewayによる参考価格
 
-カタログ製品の価格欄と削除ボタンの間にある店舗ボタンで、販売店・価格・送料区分・最安バッジ・商品ページへのリンクを比較できます。
-比較は非モーダルpopoverで、Offerの取得・更新が手入力した構成価格を上書きすることはありません。
-各販売店のショップ名・価格の表示部分を選ぶと、その商品の表示価格を該当する構成行へ入力してpopoverを閉じます。送料は加算せず、反映後も手動編集できます。右端の商品ページへのリンクは独立しています。
-
-検索一覧の最安価格はbulk summary API専用の経路を用意しています。2026-09-23時点では本番APIが未提供（404）のため既定で無効です。
-**検索一覧価格にはbulk summary backendが必要です。** 正式仕様への接続後は、製品追加・置換時だけ取得済みの最安値を初期価格にできます。
-接続フラグ・データフロー・保存／cache・UX・検証方法は [Yahoo価格表示・比較](docs/offers.md) を参照してください。
+検索・製品情報はCatalog、販売価格はpc-parts-pricingの公開Gatewayへ分離しています。価格取得は既定で無効です。
+有効時は製品一覧を価格を待たず表示し、表示中20件のsummaryだけ一括取得します。pendingや古い結果は有限再確認します。
+製品選択時の利用可能なcomplete価格だけ初期価格へコピーし、その後の手入力・保存済み価格を自動更新しません。
+構成行の円マークから参考価格パネルを開き、取得先・日時・状態を確認して「この価格を適用」でその行だけ更新できます。
+**従来の店舗別比較・店舗別価格選択・購入リンクは一時的に提供しません。** Gatewayはsummaryのみです。旧Catalog価格APIへのfallbackはありません。
+設定・状態・polling/cooldown・ローカルGateway・本番接続前の残作業は [参考価格の開発・運用](docs/offers.md) を参照してください。
 
 ## 開発
 
-Node.js **22.12以上（24 LTS推奨）**、npmを使用します。APIキー・環境変数の設定は不要です。
+Node.js **22.12以上（24 LTS推奨）**、npmを使用します。価格無効の検索・構成編集にAPIキーや環境変数は不要です。
 
 ```sh
 npm ci
@@ -56,6 +55,11 @@ npm run dev
 ```
 
 表示されたローカルURL（通常 `http://localhost:5173`）を開いてください。
+
+価格を有効化する場合は `.env.example` を `.env.local` へコピーし、`VITE_PRICING_ENABLED=true` と確認済みの `VITE_PRICING_API_BASE_URL` を設定します。
+Viteのビルド時設定のため変更後はdev server再起動／production再buildが必要です。既定は無効・URL未設定で、本番URLは未確認です。
+ローカルGatewayは `http://127.0.0.1:8788`。許可Originに合わせ `npm run dev -- --host 127.0.0.1 --port 5173 --strictPort` で起動します。
+Pricing側の既存 `dev:gateway` / `dev:gateway:rpc` の利用手順・HTTPのloopback制約は上記運用文書を参照してください。ブラウザへSecretは渡しません。
 
 ```sh
 npm run build
@@ -75,9 +79,9 @@ npm run build
 # 初回のみChromiumをインストール
 npx playwright install chromium
 npm run test:e2e
-npm run test:offers
+npm run test:pricing
 
-# 実際の公開APIに接続する任意のスモークテスト
+# 実際の公開Catalogに接続する任意のスモークテスト（別途明示承認時のみ）
 npm run test:live
 ```
 
@@ -86,7 +90,7 @@ npm run test:live
 - `test:live`：カテゴリ一覧と全30カテゴリの実レスポンス・スペック要約を検証します。ブラウザでCPU空欄一覧のcursorページ移動・前へ、`ryzen` のoffsetページ移動・前へ、`9800x3d` 検索 → 追加 → リロード → 削除まで確認します。ネットワークと公開APIの稼働状況に依存します。
 - スクリーンショット・失敗時traceは `test-results/` に出力します（Git対象外）。
 - 30カテゴリ対応：registryとProductionカテゴリ一覧の一致、optional 20カテゴリのGET検索・typed/空spec・null要約、全30カテゴリの保存復元、v1〜5の旧主9カテゴリ保持を単体テストします。E2Eでは追加候補13カテゴリの検索→追加→置換→リロード→削除、候補の非表示/再表示、multipleの複数行、フォーカス復帰をdesktop/mobileで検証します。OSの常設・single制約・追加/置換/削除・既存v5保存データの復元、4グループの表示と空グループの非表示、候補から除外した7カテゴリの保存データ復元・削除も確認します。
-- GitHub Actions（`.github/workflows/ci.yml`）：PRとmainへのpushでNode.js 24上の `npm ci` → lint → typecheck → unit test → production build → Playwright Chromiumセットアップ → desktop/mobile E2Eを実行します。通常CIは公開APIに依存せず、`test:live` は含めません。
+- GitHub Actions（`.github/workflows/ci.yml`）：PRとmainへのpushでNode.js 24上の `npm ci` → lint → typecheck → unit test → production build → Playwright Chromiumセットアップ → desktop/mobile E2E＋Pricing E2Eを実行します。通常CIは全APIをmockし、旧Catalog価格要求も検出して失敗させます。公開API・実Yahooに依存せず、`test:live` は含めません。
 
 ## APIとの接続
 
@@ -123,6 +127,7 @@ npm run test:live
 ```text
 src/
   api/catalog/        client・Zod schemas・型・Query hooks
+  api/pricing/        Gateway設定・HTTP・契約・価格専用の有限再確認・Query hooks
   components/         共通Dialog・出典表記
   domain/             30カテゴリregistry・主要スペックの表示変換・共通円フォーマット
   features/
@@ -135,7 +140,7 @@ src/
 e2e/                  固定レスポンスE2E・実APIスモークテスト
 ```
 
-責務は `UI → Query hook → API client → pc-parts-catalog` に分離しています。
+検索は `UI → Catalog Query/client → pc-parts-catalog`、価格は `UI → Pricing Query/client → 公開Pricing Gateway → pc-parts-pricing` です。本番URL・Origin許可・受付・Pricing稼働version/migrationは未確認で、本対応はデプロイや本番接続確認を意味しません。
 
 構成は `BuildItem[]` です。Zod schemaから導出する判別可能なunionです。
 
@@ -190,7 +195,7 @@ Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（�
 
 ### 見積もりの入力・計算ルール
 
-**価格はユーザーが手入力する1商品（1行）の金額**です。ECサイトからの取得・自動更新は行いません。
+**構成価格はユーザーが決める1商品（1行）の金額**です。手入力、製品選択時の参考価格コピー、パネルからの明示適用で設定し、取得結果で自動更新しません。
 
 | 項目 | ルール |
 | --- | --- |
@@ -232,7 +237,7 @@ Store actionsは `addItem` / `replaceItem` / `addCustomItem` / `updateItem`（�
 
 Phase 3へ進む前に、電力/互換性に必要なカタログspecの欠損時の扱い、同一カテゴリ複数Itemやkitの内容数の解釈、価格0円のパーツも判定対象にするルール、任意項目の情報不足、概算/警告の根拠と表示密度を検討します。保存に新しいユーザー設定を追加する場合はmigrationも必要です。
 
-外部価格取得・互換性判定・電力計算・URL共有・ログイン・クラウド保存・条件連動の候補件数表示は未実装です。
+互換性判定・URL共有・ログイン・クラウド保存は未実装です。参考価格のGateway接続はopt-inで実装していますが、本番接続・デプロイは別途確認と承認が必要です。
 
 ## データ出典
 

@@ -33,6 +33,27 @@ async function setup(storage: StateStorage) {
 }
 
 describe('build state and persistence', () => {
+  it('explicit reference-price application checks the current durable ref, row kind and price bounds', async () => {
+    const { storage, data } = memoryStorage()
+    const { store } = await setup(storage)
+    const ref = { source: product.source!, upstream_key: product.upstream_key }
+    store.getState().addItem(product, { initialPrice: 0 })
+    store.getState().addCustomItem({ name: 'ケーブル', price: 1000 })
+    const [row, custom] = store.getState().items
+    expect(store.getState().applyReferencePrice(row.id, ref, 57800)).toBe(true)
+    expect(store.getState().items[1].price).toBe(1000)
+    expect(store.getState().applyReferencePrice(custom.id, ref, 57800)).toBe(false)
+    expect(store.getState().applyReferencePrice(row.id, ref, MAX_PRICE + 1)).toBe(false)
+    // Numeric IDs are not durable identifiers.
+    store.getState().replaceItem(row.id, { ...product, id: 999 })
+    expect(store.getState().applyReferencePrice(row.id, ref, 57000)).toBe(true)
+    store.getState().replaceItem(row.id, { ...product, upstream_key: 'CPU/other' }, { initialPrice: 0 })
+    expect(store.getState().applyReferencePrice(row.id, ref, 57800)).toBe(false)
+    expect(store.getState().items[0].price).toBe(0)
+    store.getState().removeItem(row.id)
+    expect(store.getState().applyReferencePrice(row.id, ref, 57800)).toBe(false)
+    expect(JSON.parse(data.get(BUILD_STORAGE_KEY)!).version).toBe(5)
+  })
   it('copies initial prices only on selection and persists just the existing v5 build fields', async () => {
     const { storage, data } = memoryStorage()
     const { store } = await setup(storage)

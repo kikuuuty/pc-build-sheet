@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { createJSONStorage, persist, type StateStorage } from 'zustand/middleware'
 import { z } from 'zod'
 import type { CatalogProduct } from '../../api/catalog/types'
+import { refKey, type ProductRef } from '../../api/pricing/schemas'
 import { partCategories } from '../../domain/categories'
 import {
   buildItemSchema, customItemInputSchema, customNameSchema, itemChangesSchema,
@@ -19,6 +20,7 @@ type BuildState = {
   replaceItem: (id: string, product: CatalogProduct, options?: { initialPrice: number | null }) => boolean
   addCustomItem: (input: CustomItemInput) => boolean
   updateItem: (id: string, changes: ItemChanges) => boolean
+  applyReferencePrice: (id: string, ref: ProductRef, price: number) => boolean
   renameCustomItem: (id: string, name: string) => boolean
   removeItem: (id: string) => void
   clearBuild: () => void
@@ -113,6 +115,12 @@ export function createBuildStore(
         if (!parsed.success) return false
         set((state) => ({ items: state.items.map((item) => item.id === id ? parsed.data : item) }))
         return true
+      },
+      applyReferencePrice: (id, ref, price) => {
+        const item = get().items.find((row) => row.id === id)
+        if (item?.kind !== 'catalog' || !item.product.source
+          || refKey({ source: item.product.source, upstream_key: item.product.upstream_key }) !== refKey(ref)) return false
+        return get().updateItem(id, { price })
       },
       renameCustomItem: (id, input) => {
         const item = get().items.find((item) => item.id === id)

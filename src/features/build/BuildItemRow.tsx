@@ -8,7 +8,7 @@ import type { BuildItem } from './schemas'
 import { useBuildStore } from './store'
 import { PriceInput } from './PriceInput'
 import { CustomItemDialog } from './CustomItemDialog'
-import { OfferButton } from './OfferButton'
+import { ReferencePriceButton } from './ReferencePriceButton'
 
 export function BuildItemRow({ item, productRef, onSearch, onRemove, onAnnounce }: {
   item: BuildItem; productRef?: RefObject<HTMLButtonElement | null>
@@ -37,9 +37,10 @@ export function BuildItemRow({ item, productRef, onSearch, onRemove, onAnnounce 
         <span id={`${id}-name`} className="product-name">{name}</span>
         {specs && <span className="product-details" title={specs}>{specs}</span>}
       </button>
-      <PriceInput key={`${item.kind === 'catalog' ? item.product.upstream_key : item.id}:${priceRevision}`} name={name} price={item.price} onCommit={(price) => { updateItem(item.id, { price }) }} />
-      {item.kind === 'catalog' && <OfferButton key={item.product.id} productId={item.product.id} name={name} onUsePrice={(price) => {
-        if (updateItem(item.id, { price })) {
+      <PriceInput key={`${item.kind === 'catalog' ? JSON.stringify([item.product.source, item.product.upstream_key]) : item.id}:${priceRevision}`} name={name} price={item.price} onCommit={(price) => { updateItem(item.id, { price }) }} />
+      {item.kind === 'catalog' && <ReferencePriceButton key={JSON.stringify([item.product.source, item.product.upstream_key])}
+        product={item.product.source ? { source: item.product.source, upstream_key: item.product.upstream_key } : null} name={name} onUsePrice={(price, ref) => {
+        if (useBuildStore.getState().applyReferencePrice(item.id, ref, price)) {
           // Explicit selection replaces even an invalid, uncommitted editor draft.
           setPriceRevision((revision) => revision + 1)
           onAnnounce(`${name}の価格を${formatYen(price)}に変更しました`)

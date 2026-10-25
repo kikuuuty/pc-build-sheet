@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './test'
 import { writeFile } from 'node:fs/promises'
 import fixture from '../src/test/fixtures/cpu-search.json' with { type: 'json' }
 import categoriesFixture from '../src/test/fixtures/categories.json' with { type: 'json' }
@@ -34,14 +34,17 @@ async function mockCatalog(page: Page) {
 
 test.beforeEach(async ({ page }) => { await mockCatalog(page) })
 
-test('unavailable bulk summary leaves selection usable without summary probes or offers fan-out', async ({ page }) => {
+test('pricing is opt-in: disabled production build selects and edits without any price calls, even with the old flag true', async ({ page }) => {
   const priceRequests: string[] = []
-  page.on('request', (request) => { if (request.url().includes('/offers')) priceRequests.push(request.url()) })
+  page.on('request', (request) => { if (/offers|\/v1\/prices\//.test(request.url())) priceRequests.push(request.url()) })
   await page.goto('/')
   await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
-  await expect(page.getByText('価格情報なし', { exact: true })).toBeVisible()
+  await expect(page.getByText('価格自動取得オフ', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: `${productName}を構成に追加`, exact: true }).click()
   await expect(page.getByRole('textbox', { name: `価格：${productName}（円）` })).toHaveValue('')
+  expect(priceRequests).toEqual([])
+  await page.getByRole('button', { name: `${productName}の参考価格を確認`, exact: true }).click()
+  await expect(page.getByText('価格自動取得オフ', { exact: true })).toBeVisible()
   expect(priceRequests).toEqual([])
 })
 

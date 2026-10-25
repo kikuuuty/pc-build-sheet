@@ -12,9 +12,8 @@
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pretest:e2e": "npm run build",
     "test:e2e": "playwright test",
-    "test:offers": "playwright test --config playwright.offers.config.ts",
+    "test:pricing": "playwright test --config playwright.pricing.config.ts",
     "pretest:live": "npm run build",
     "test:live": "playwright test --config playwright.live.config.ts"
   },

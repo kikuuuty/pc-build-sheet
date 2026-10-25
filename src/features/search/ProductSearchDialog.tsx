@@ -1,6 +1,8 @@
 import { useRef, useState, type RefObject } from 'react'
 import { Plus, Search, X, ChevronLeft, ChevronRight, ArrowLeftRight } from 'lucide-react'
-import { useCatalogCategories, useCategoryFilters, useDynamicFacets, useProductSearch, useOffersSummary } from '../../api/catalog/queries'
+import { useCatalogCategories, useCategoryFilters, useDynamicFacets, useProductSearch } from '../../api/catalog/queries'
+import { usePriceSummaries } from '../../api/pricing/queries'
+import { refKey } from '../../api/pricing/schemas'
 import type { CategoryDefinition } from '../../domain/categories'
 import type { CatalogProduct } from '../../api/catalog/types'
 import { productSpecSummary } from '../../domain/product-summary'
@@ -124,11 +126,11 @@ function SearchResults({ category, target, query, conditions, onSelected }: Pick
   const replaceItem = useBuildStore((state) => state.replaceItem)
   const [selectionError, setSelectionError] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
-  const prices = useOffersSummary(search.data?.data.map(({ id }) => id) ?? [])
-  const priceById = new Map(prices.data?.products.map((summary) => [summary.id, summary]))
-  const priceState = (id: number) => searchPriceState(priceById.get(id), prices)
+  const prices = usePriceSummaries(search.isSuccess ? search.data.data.map(({ source, upstream_key }) => ({ source, upstream_key })) : [])
+  const priceByRef = new Map(prices.data?.map((summary) => [refKey(summary), summary]))
+  const priceState = (product: CatalogProduct) => searchPriceState(product.source ? priceByRef.get(refKey({ source: product.source, upstream_key: product.upstream_key })) : undefined, prices)
   function select(product: CatalogProduct) {
-    const options = { initialPrice: initialSearchPrice(priceState(product.id)) }
+    const options = { initialPrice: initialSearchPrice(priceState(product)) }
     const saved = product.category === category.id && (target.mode === 'add' ? addItem(product, options) : replaceItem(target.itemId, product, options))
     if (saved) onSelected(product.name)
     else setSelectionError(true)
@@ -165,9 +167,9 @@ function SearchResults({ category, target, query, conditions, onSelected }: Pick
             {search.data.data.length === 0 ? <SearchEmpty /> : (
               <ul className="search-results">
                 {search.data.data.map((product) => (
-                  <li className="search-result" key={product.upstream_key}>
+                  <li className="search-result" key={JSON.stringify([product.source, product.upstream_key])}>
                     <div className="product-info"><p className="product-name">{product.name}</p><p className="product-details">{product.manufacturer ?? 'メーカー情報なし'}</p><p className="product-details">{productSpecSummary(product) || '主要スペック情報なし'}</p></div>
-                    <SearchPrice state={priceState(product.id)} />
+                    <SearchPrice state={priceState(product)} />
                     <button type="button" className="button primary add-product" aria-label={target.mode === 'add' ? `${product.name}を構成に追加` : `${product.name}に置き換える`} onClick={() => select(product)}>
                       {target.mode === 'add' ? <Plus size={15} aria-hidden="true" /> : <ArrowLeftRight size={15} aria-hidden="true" />}{target.mode === 'add' ? '追加' : '置換'}
                     </button>
@@ -186,7 +188,7 @@ function SearchResults({ category, target, query, conditions, onSelected }: Pick
           </>
         )}
       </div>
-      <div className="search-footer"><Attribution source={search.data?.meta.source} /></div>
+      <div className="search-footer"><p className="field-hint">参考価格：Yahoo!ショッピング。送料・ポイントは反映しません。詳細は追加後の参考価格パネルで確認できます。{prices.stopped && '自動確認は停止しました。追加後に手動で再確認できます。'}</p><Attribution source={search.data?.meta.source} /></div>
     </>
   )
 }

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test, type Page } from './test'
 import fixture from '../src/test/fixtures/cpu-search.json' with { type: 'json' }
 import categories from '../src/test/fixtures/categories.json' with { type: 'json' }
 import { powerItem, powerProduct } from '../src/test/power-products'

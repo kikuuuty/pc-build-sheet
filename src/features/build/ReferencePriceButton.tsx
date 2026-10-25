@@ -1,38 +1,42 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
-import { ExternalLink, LoaderCircle, RefreshCw, Store, X } from 'lucide-react'
-import { useProductOffers } from '../../api/catalog/queries'
-import type { ProductOffer } from '../../api/catalog/types'
+import { RefreshCw, BadgeJapaneseYen, X } from 'lucide-react'
+import { usePriceSummaries } from '../../api/pricing/queries'
+import { refKey, type ProductRef } from '../../api/pricing/schemas'
+import { searchPriceState, initialSearchPrice } from '../search/search-price'
+import { SearchPrice } from '../search/SearchPrice'
 import { formatYen } from '../../domain/currency'
 import { MAX_PRICE } from './schemas'
 
-export function OfferButton({ productId, name, onUsePrice }: { productId: number; name: string; onUsePrice: (price: number) => void }) {
+export function ReferencePriceButton({ product, name, onUsePrice }: { product: ProductRef | null; name: string; onUsePrice: (price: number, ref: ProductRef) => void }) {
   const [open, setOpen] = useState(false)
   const button = useRef<HTMLButtonElement>(null)
   const id = useId()
-  const query = useProductOffers(productId, open)
-  const empty = query.isSuccess && query.data.offers.length === 0
   return <>
-    <button ref={button} type="button" className={`icon-button offer-button${empty ? ' no-offers' : ''}`}
-      aria-label={`${name}の販売店を比較`} title={empty ? '販売店情報がありません' : `${name}の販売店を比較`}
+    <button ref={button} type="button" className="icon-button reference-price-button"
+      aria-label={`${name}の参考価格を確認`} title={`${name}の参考価格を確認・適用`}
       aria-haspopup="dialog" aria-expanded={open} aria-controls={open ? id : undefined}
       onClick={() => setOpen(!open)}>
-      <Store size={16} aria-hidden="true" />
-      {query.isFetching && <LoaderCircle className="spinner offer-spinner" size={10} aria-hidden="true" />}
+      <BadgeJapaneseYen size={16} aria-hidden="true" />
     </button>
-    {open && <OfferPopover id={id} name={name} anchor={button} onClose={() => setOpen(false)} query={query} onUsePrice={(price) => {
-      onUsePrice(price)
+    {open && <ReferencePricePanel id={id} name={name} product={product} anchor={button} onClose={() => setOpen(false)} onUsePrice={(price) => {
+      if (product) onUsePrice(price, product)
       button.current?.focus({ preventScroll: true })
       setOpen(false)
     }} />}
   </>
 }
 
-function OfferPopover({ id, name, anchor, onClose, query, onUsePrice }: {
+function ReferencePricePanel({ id, name, product, anchor, onClose, onUsePrice }: {
   id: string; name: string; anchor: RefObject<HTMLButtonElement | null>; onClose: () => void
-  query: ReturnType<typeof useProductOffers>
+  product: ProductRef | null
   onUsePrice: (price: number) => void
 }) {
+  const query = usePriceSummaries(product ? [product] : [])
+  const summary = query.data?.find((s) => product && refKey(s) === refKey(product))
+  const state = !product && query.availability === 'enabled'
+    ? { status: 'missing' as const } : searchPriceState(summary, query)
+  const price = initialSearchPrice(state)
   const panel = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     const element = panel.current!
@@ -100,9 +104,8 @@ function OfferPopover({ id, name, anchor, onClose, query, onUsePrice }: {
     }
   }, [anchor, onClose])
 
-  const offers = query.data?.offers ?? []
   return createPortal(<div ref={panel} id={id} role="dialog" aria-labelledby={`${id}-title`} aria-describedby={`${id}-note`}
-    tabIndex={-1} className="offer-popover" onKeyDown={(event) => {
+    tabIndex={-1} className="reference-price-panel" onKeyDown={(event) => {
       if (event.key !== 'Tab') return
       const controls = Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), a[href]'))
       if (event.shiftKey && (event.target === event.currentTarget || event.target === controls[0])) {
@@ -118,38 +121,25 @@ function OfferPopover({ id, name, anchor, onClose, query, onUsePrice }: {
         onClose()
       }
     }}>
-    <div className="offer-heading">
-      <div><h2 id={`${id}-title`}>{name}</h2><p>価格比較{query.isSuccess ? ` ${offers.length}件` : ''}</p></div>
-      <button type="button" className="icon-button" aria-label="価格比較を閉じる" onClick={() => { anchor.current?.focus(); onClose() }}><X size={18} aria-hidden="true" /></button>
+    <div className="reference-price-heading">
+      <div><h2 id={`${id}-title`}>{name}</h2><p>参考価格の確認・適用</p></div>
+      <button type="button" className="icon-button" aria-label="参考価格を閉じる" onClick={() => { anchor.current?.focus(); onClose() }}><X size={18} aria-hidden="true" /></button>
     </div>
-    <p id={`${id}-note`} className="offer-note">ショップ名・価格の部分を選ぶと、構成の価格欄に入力します。反映後も手動編集できます。送料は加算しません。</p>
-    <div className="offer-content" aria-busy={query.isFetching}>
-      {query.isPending ? <p role="status">価格取得中…</p>
-        : query.isError ? <div role="alert"><p>価格情報を取得できませんでした。</p><button type="button" className="button secondary" disabled={query.isFetching} onClick={() => { void query.refetch() }}>再試行</button></div>
-        : offers.length === 0 ? <p>販売店情報がありません</p>
-        : <OfferList offers={offers} onUsePrice={onUsePrice} />}
+    <p id={`${id}-note`} className="reference-price-note">取得先：Yahoo!ショッピング（Pricing Gateway経由）。送料・ポイントは反映しません。店舗別比較・購入リンクは現在提供していません。適用するまで構成価格は変わりません。</p>
+    <div className="reference-price-content" aria-busy={query.isFetching}>
+      <p role="status"><SearchPrice state={state} /></p>
+      {!product && <p>保存された製品参照を確認できません。必要に応じて製品を選び直してください。</p>}
+      {summary?.fetchedAt && <p>取得日時：<time dateTime={summary.fetchedAt}>{new Date(summary.fetchedAt).toLocaleString('ja-JP')}</time></p>}
+      {summary && <p>状態：{summary.status}{state.status === 'ready' ? state.stale ? ' / 古い結果・再確認待ち' : ' / 取得期限内' : ''}</p>}
+      {query.isError && summary && <p role="alert">再確認に失敗しました。表示は前回の結果です。</p>}
+      {query.stopped && <p>自動確認は停止しました。更新完了時刻は保証されません。手動で再確認できます。</p>}
+      {query.waiting && <p>次の確認可能時刻：{new Date(query.waitUntil).toLocaleTimeString('ja-JP')}</p>}
+      {summary?.status === 'complete' && summary.price! > MAX_PRICE && <p>構成価格の入力上限は{formatYen(MAX_PRICE)}です。この価格は適用できません。</p>}
+      {summary?.status === 'complete' && <button type="button" className="button primary" disabled={price === null}
+        onClick={() => { if (price !== null) onUsePrice(price) }}>この価格を適用</button>}
     </div>
-    {query.isSuccess && <div className="offer-footer"><button type="button" className="text-button" disabled={query.isFetching} onClick={() => { void query.refetch() }}>
-      <RefreshCw size={13} aria-hidden="true" />{query.isFetching ? '価格取得中…' : '価格情報を更新'}
-    </button></div>}
+    <div className="reference-price-footer"><button type="button" className="text-button" disabled={!product || !query.canRecheck} onClick={query.recheck}>
+      <RefreshCw size={13} aria-hidden="true" />{query.isFetching ? '価格を確認中' : '参考価格を再確認'}
+    </button></div>
   </div>, document.body)
-}
-
-function OfferList({ offers, onUsePrice }: { offers: ProductOffer[]; onUsePrice: (price: number) => void }) {
-  const sorted = [...offers].sort((a, b) => a.price - b.price)
-  const lowest = sorted[0]?.price
-  return <ul className="offer-list" aria-label="販売店の価格一覧">
-    {sorted.map((offer) => <li className="offer-row" key={`${offer.provider_item_id}:${offer.seller.id}:${offer.url}`}>
-      <button type="button" className="offer-select" disabled={offer.price > MAX_PRICE}
-        title={offer.price > MAX_PRICE ? `構成価格の入力上限は${formatYen(MAX_PRICE)}です` : undefined}
-        aria-label={`${offer.seller.name}の${offer.price.toLocaleString('ja-JP')}円を構成価格に使用`}
-        onClick={() => onUsePrice(offer.price)}>
-        <span className="offer-seller">{offer.seller.name}</span>
-        <span className="offer-price">{formatYen(offer.price)}</span>
-        <span className="offer-shipping">{offer.shipping?.name ?? '送料情報なし'}</span>
-        <span className="offer-badge-slot">{offer.price === lowest && <span className="offer-lowest">最安</span>}</span>
-      </button>
-      <a className="icon-button" href={offer.url} target="_blank" rel="noopener noreferrer" aria-label={`${offer.seller.name}の商品ページを新しいタブで開く`}><ExternalLink size={16} aria-hidden="true" /></a>
-    </li>)}
-  </ul>
 }
