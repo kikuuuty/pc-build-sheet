@@ -27,13 +27,20 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
-      - run: npm run test:pricing
+      # This successful step is the barrier for all preceding prerequisites.
+      - id: browsers
+        run: npx playwright install --with-deps chromium
+      - name: Standard E2E (Pricing disabled)
+        run: npm run test:e2e
+      - name: Pricing E2E (mock Gateway)
+        if: ${{ !cancelled() && steps.browsers.outcome == 'success' }}
+        run: npm run test:pricing
       - name: Upload Playwright results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-results
-          path: test-results/
+          path: |
+            test-results/standard/
+            test-results/pricing/
           retention-days: 7

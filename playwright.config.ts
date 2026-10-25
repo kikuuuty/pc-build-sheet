@@ -7,8 +7,9 @@ export default defineConfig({
   workers: 4,
   forbidOnly: !!process.env.CI,
   retries: 0,
-  reporter: 'list',
-  use: { baseURL: 'http://127.0.0.1:4173', trace: 'retain-on-failure' },
+  outputDir: 'test-results/standard',
+  reporter: [['list'], ['json', { outputFile: 'test-results/standard/results.json' }]],
+  use: { baseURL: 'http://127.0.0.1:4173', trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   projects: [
     { name: 'desktop', use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 960 } } },
     { name: 'mobile', use: { ...devices['Pixel 7'] } },

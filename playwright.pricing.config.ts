@@ -7,6 +7,7 @@ export default defineConfig({
   testIgnore: [],
   testMatch: '**/pricing.spec.ts',
   outputDir: 'test-results/pricing',
+  reporter: [['list'], ['json', { outputFile: 'test-results/pricing/results.json' }]],
   use: { ...base.use, baseURL: 'http://127.0.0.1:4183' },
   webServer: {
     command: 'npm run build -- --outDir dist-pricing && npm run preview -- --outDir dist-pricing --host 127.0.0.1 --port 4183 --strictPort',

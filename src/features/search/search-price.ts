@@ -1,4 +1,4 @@
-import { isOld, type PriceSummary } from '../../api/pricing/schemas'
+import { isOld, needsConfirmation, type PriceSummary } from '../../api/pricing/schemas'
 import { MAX_PRICE } from '../build/schemas'
 
 export type SearchPriceState =
@@ -17,4 +17,12 @@ export function searchPriceState(summary: PriceSummary | undefined, query: { ava
 // Prices outside the existing editor's range must not make a product unselectable.
 export function initialSearchPrice(state: SearchPriceState): number | null {
   return state.status === 'ready' && !state.failed && state.price <= MAX_PRICE ? state.price : null
+}
+
+export function needsSearchPriceRecheck(query: {
+  availability: 'enabled' | 'disabled' | 'invalid'; stopped: boolean; isError: boolean
+  data?: PriceSummary[]
+}, productCount: number) {
+  return productCount > 0 && query.availability === 'enabled' && query.stopped
+    && (query.isError || needsConfirmation(query.data ?? []))
 }

@@ -117,6 +117,13 @@ Catalogの1ページ20件を先に表示し、表示中のrefsを1 bulkで取得
 `stale`は更新処理の実行中を保証しない。pendingの過去expiryやstale unsupportedも受け入れる。
 cacheが期限切れになった場合は前回値として表示し、サーバーによる後続のpending/empty等は前回のcompleteを混ぜず**全置換**する。
 
+一覧の共通フッターには、pending/stale complete/stale emptyが残って自動確認が停止した場合、または価格エラーで停止した場合だけ「価格を再確認」を表示する。
+初回取得・継続中のpolling/retry・正常な終端結果だけの一覧・無効/設定不備・空一覧では表示しない。
+unsupported/missingはstaleでも未解決扱いにしない。製品追加前でも、表示中refsの既存bulkを手動で再確認できる。
+cooldown中と通信中は操作不可。既存hookの `recheck` / `canRecheck` を使い、別fetchやtimer、保存価格の変更は追加していない。
+手動要求中はボタンを維持し、完了後もそのボタンがfocusを持つ間は結果の文言を表示して残す。Tabやクリックで離れた後に隠す。
+待機/通信中もfocusを不自然に失わないよう `aria-disabled` と操作ガードを併用する。
+
 構成行の円マークボタンはcatalog行だけにある。パネルを開いたときだけ1件bulkを取得し、適切な一覧/同一製品cacheがあれば再利用する。
 パネルには取得先、参考価格、取得日時、状態、制限付き手動再確認と「この価格を適用」を表示する。
 閉じる・Escape・外側クリック・Tab離脱とフォーカス復帰を維持。閉じた後は不要な自動確認を止める。
@@ -160,6 +167,9 @@ git diff --check
 
 `test:e2e` は無効のproduction build、`test:pricing` は有効な専用production previewをPlaywrightがbuild/起動/終了する。
 どちらもdesktop/mobileで確認し、外部Pricing serverは不要。
+通常E2Eの出力先は `test-results/standard/`、Pricingは `test-results/pricing/`。それぞれ独立にcleanupし、JSON結果・失敗trace・error-context・取得可能な失敗画像を保持する。
+CIはブラウザ導入までの前提成功を条件に、通常E2Eが失敗してもPricing E2Eを実行する。キャンセル/前提失敗時は開始せず、どちらかの失敗を成功に置き換えない。
+画像保存失敗の調査・反復検証・限定retry・診断添付の詳細は [E2E追跡記録](e2e-pricing-followup.md) を参照。
 全通常E2Eは未mockの外部通信を拒否し、旧Catalog価格APIへの要求はmockされていても失敗させる。
 旧フラグtrueを意図的に残し、新Pricing要求以外が復活しないことも検証する。`test:offers` は `test:pricing` へ置き換えた。
 単体では契約、ref照合、各状態、HTTP/body timeout/Abort、有限retry/polling、cooldown、cache、remount/非表示/offline/復帰/GC、行の安全な適用を検証する。

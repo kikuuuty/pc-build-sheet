@@ -11,6 +11,7 @@ const storageKey = 'pc-build-sheet:build'
 const check = (page: Page) => page.getByRole('button', { name: `${product.name}の参考価格を確認`, exact: true })
 const price = (page: Page) => page.getByRole('textbox', { name: `価格：${product.name}（円）`, exact: true })
 const panel = (page: Page) => page.getByRole('dialog', { name: product.name, exact: true })
+const listRecheck = (page: Page) => page.locator('.search-price-recheck').getByRole('button')
 async function search(page: Page) {
   await page.goto('/')
   await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
@@ -44,6 +45,7 @@ test('one bulk for 20 visible products, durable refs rather than numeric IDs, an
   await page.route(summaryUrl, (route) => { calls++; return route.fulfill({ json: pricingResponse(route.request().postDataJSON().products) }) })
   await search(page)
   await expect(page.locator('.search-result')).toHaveCount(20)
+  await expect(listRecheck(page)).toHaveCount(0)
   await expect(page.locator('.search-result').first().getByText('57,800円から', { exact: true })).toBeAttached()
   expect(calls).toBe(1)
   await page.getByRole('button', { name: `${product.name}を構成に追加`, exact: true }).click()
@@ -150,6 +152,144 @@ test('pending polls finitely, stops on dialog close, and remount does not reset 
   expect(calls).toBe(count)
 })
 
+test('stopped pending list recovers with one keyboard-operated bulk; footer and focus remain stable', async ({ page }, info) => {
+  await page.clock.install()
+  const products = [product, { ...product, name: 'Other CPU', id: 900, upstream_key: 'CPU/other' }]
+  await page.route(`${catalog}/v1/search?**`, (route) => route.fulfill({ json: { ...fixture, data: products, meta: { ...fixture.meta, returned: 2 } } }))
+  const requests: ProductRef[][] = []
+  let manual = false
+  let release!: () => void
+  const held = new Promise<void>((resolve) => { release = resolve })
+  await page.route(summaryUrl, async (route) => {
+    const refs: ProductRef[] = route.request().postDataJSON().products
+    requests.push(refs)
+    if (manual) await held
+    await route.fulfill({ json: pricingResponse(refs, manual ? 'complete' : 'pending') })
+  })
+  await search(page)
+  await expect(page.getByText('更新待ち', { exact: true })).toHaveCount(2)
+  await expect(listRecheck(page)).toHaveCount(0)
+  await page.clock.runFor(330_000)
+  await expect(listRecheck(page)).toHaveText('価格を再確認')
+  expect(await page.locator('.build-item').count()).toBe(0)
+  for (const width of info.project.name === 'mobile' ? [393, 320] : [1280]) {
+    await page.setViewportSize({ width, height: 960 })
+    const footer = page.locator('.search-footer')
+    expect(await footer.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+    expect(await page.getByRole('dialog').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+  }
+  const position = await listRecheck(page).boundingBox()
+  manual = true
+  const before = requests.length
+  await listRecheck(page).focus()
+  await page.keyboard.press('Enter')
+  await expect(listRecheck(page)).toHaveText('価格を再確認中')
+  await expect(listRecheck(page)).toBeFocused()
+  await expect(listRecheck(page)).toBeDisabled()
+  expect((await listRecheck(page).boundingBox())?.x).toBeCloseTo(position!.x, 0)
+  expect((await listRecheck(page).boundingBox())?.y).toBeCloseTo(position!.y, 0)
+  await listRecheck(page).evaluate((button) => { for (let i = 0; i < 10; i++) (button as HTMLButtonElement).click() })
+  expect(requests).toHaveLength(before + 1)
+  expect(requests.at(-1)).toHaveLength(2)
+  release()
+  await expect(page.getByText('57,800円から', { exact: true })).toHaveCount(2)
+  await expect(listRecheck(page)).toHaveText('価格を確認しました')
+  await expect(listRecheck(page)).toBeFocused()
+  expect((await listRecheck(page).boundingBox())?.x).toBeCloseTo(position!.x, 0)
+  expect((await listRecheck(page).boundingBox())?.y).toBeCloseTo(position!.y, 0)
+  await page.keyboard.press('Tab')
+  await expect(listRecheck(page)).toHaveCount(0)
+  expect(await page.evaluate(() => document.activeElement?.tagName)).not.toBe('BODY')
+  await page.getByRole('button', { name: `${product.name}を構成に追加`, exact: true }).click()
+  await expect(price(page)).toHaveValue('57800')
+})
+
+test('list manual recheck honors long Retry-After across page changes and dialog reopen', async ({ page }) => {
+  await page.clock.install()
+  await page.route(`${catalog}/v1/search?**`, (route) => {
+    const next = new URL(route.request().url()).searchParams.has('cursor')
+    return route.fulfill({ json: { ...fixture, data: [next ? replacement : product], meta: { ...fixture.meta, next_cursor: next ? null : 'next' } } })
+  })
+  let calls = 0
+  await page.route(summaryUrl, (route) => ++calls === 1
+    ? route.fulfill({ status: 503, headers: { 'Retry-After': '600', 'Access-Control-Expose-Headers': 'Retry-After' }, json: { ok: false, error: { code: 'PRICING_UNAVAILABLE' } } })
+    : route.fulfill({ json: pricingResponse(route.request().postDataJSON().products) }))
+  await search(page)
+  await expect(listRecheck(page)).toBeDisabled()
+  await listRecheck(page).evaluate((button) => { for (let i = 0; i < 10; i++) (button as HTMLButtonElement).click() })
+  await page.getByRole('button', { name: '次へ', exact: true }).click()
+  await expect(page.getByText(replacement.name, { exact: true })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+  await expect(listRecheck(page)).toBeDisabled()
+  await page.clock.runFor(599_000)
+  expect(calls).toBe(1)
+  await page.clock.runFor(2000)
+  await expect(listRecheck(page)).toBeEnabled()
+  expect(calls).toBe(1) // expiry does not silently restart the stopped session
+  await listRecheck(page).click()
+  await expect(page.getByText('57,800円から', { exact: true })).toBeAttached()
+  expect(calls).toBe(2)
+})
+
+test('manual list recheck never blocks navigation/search or changes existing prices, zero or invalid drafts', async ({ page }) => {
+  await page.clock.install()
+  await seed(page, [
+    { id: 'cpu', kind: 'catalog', category: 'cpu', product, price: 70000 },
+    { id: 'zero', kind: 'custom', name: 'Zero', price: 0 },
+    { id: 'draft', kind: 'custom', name: 'Draft', price: 1000 },
+  ])
+  await page.route(`${catalog}/v1/search?**`, (route) => {
+    const params = new URL(route.request().url()).searchParams
+    const next = params.has('cursor') || params.has('q')
+    return route.fulfill({ json: { ...fixture, data: [next ? replacement : product], meta: { ...fixture.meta, next_cursor: next ? null : 'next' } } })
+  })
+  let manual = false
+  let release!: () => void
+  const held = new Promise<void>((resolve) => { release = resolve })
+  await page.route(summaryUrl, async (route) => {
+    const refs: ProductRef[] = route.request().postDataJSON().products
+    const old = refs[0].upstream_key === product.upstream_key
+    if (old && manual) await held
+    await route.fulfill({ json: pricingResponse(refs, old && !manual ? 'pending' : 'complete', { lowest_price: old && !manual ? null : old ? 71000 : 42000 }) }).catch(() => {})
+  })
+  await page.goto('/')
+  await page.getByRole('textbox', { name: '価格：Draft（円）' }).fill('invalid')
+  await page.getByRole('textbox', { name: '価格：Draft（円）' }).press('Enter')
+  await page.getByRole('button', { name: `${product.name}を変更`, exact: true }).click()
+  await expect(page.getByText('更新待ち', { exact: true })).toBeVisible()
+  await page.clock.runFor(330_000)
+  await expect(listRecheck(page)).toBeEnabled()
+  manual = true
+  await listRecheck(page).click()
+  await expect(listRecheck(page)).toHaveText('価格を再確認中')
+  await page.getByRole('button', { name: '次へ', exact: true }).click()
+  await expect(page.getByText('42,000円から', { exact: true })).toBeAttached()
+  await page.getByRole('textbox', { name: '製品名・型番で検索' }).fill('replacement')
+  await page.clock.runFor(350)
+  await expect(page.getByText('「replacement」の検索結果', { exact: true })).toBeVisible()
+  release()
+  await expect(page.getByText('71,000円から', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('42,000円から', { exact: true })).toBeAttached()
+  await page.keyboard.press('Escape')
+  await expect(price(page)).toHaveValue('70000')
+  await expect(page.getByRole('textbox', { name: '価格：Zero（円）' })).toHaveValue('0')
+  await expect(page.getByRole('textbox', { name: '価格：Draft（円）' })).toHaveValue('invalid')
+  const saved = await page.evaluate((key) => JSON.parse(localStorage.getItem(key)!), storageKey)
+  expect(saved.version).toBe(5)
+  expect(saved.state.items.map((item: { price: number }) => item.price)).toEqual([70000, 0, 1000])
+})
+
+test('empty lists never offer manual recheck or issue price requests', async ({ page }) => {
+  let calls = 0
+  await page.route(summaryUrl, (route) => { calls++; return route.fulfill({ json: {} }) })
+  await page.route(`${catalog}/v1/search?**`, (route) => route.fulfill({ json: { ...fixture, data: [], meta: { ...fixture.meta, returned: 0 } } }))
+  await search(page)
+  await expect(page.locator('.search-result')).toHaveCount(0)
+  await expect(listRecheck(page)).toHaveCount(0)
+  expect(calls).toBe(0)
+})
+
 for (const status of ['complete', 'empty', 'unsupported', 'missing'] as const) {
   test(`pending → ${status} ends polling (stale unsupported/missing included)`, async ({ page }) => {
     await page.clock.install()
@@ -163,6 +303,11 @@ for (const status of ['complete', 'empty', 'unsupported', 'missing'] as const) {
     await expect(page.getByText(label, { exact: true })).toBeAttached()
     await page.clock.runFor(90_000)
     expect(calls).toBe(2)
+    await page.clock.runFor(240_000)
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'CPUを選択', exact: true }).click()
+    await expect(page.getByText(label, { exact: true })).toBeAttached()
+    await expect(listRecheck(page)).toHaveCount(0)
   })
 }
 
@@ -170,10 +315,11 @@ test('429 cooldown is shared across list and panel and cannot be bypassed by reo
   await page.clock.install()
   let calls = 0
   await page.route(summaryUrl, (route) => ++calls === 1
-    ? route.fulfill({ status: 429, headers: { 'Retry-After': '60' }, json: { ok: false, error: { code: 'RATE_LIMITED' } } })
+    ? route.fulfill({ status: 429, headers: { 'Retry-After': '60', 'Access-Control-Expose-Headers': 'Retry-After' }, json: { ok: false, error: { code: 'RATE_LIMITED' } } })
     : route.fulfill({ json: pricingResponse(route.request().postDataJSON().products) }))
   await search(page)
   await expect(page.getByText('価格を取得できませんでした', { exact: true })).toBeVisible()
+  await expect(listRecheck(page)).toHaveCount(0) // the single automatic retry is still scheduled
   await page.getByRole('button', { name: `${product.name}を構成に追加`, exact: true }).click()
   await check(page).click()
   await expect(panel(page).getByRole('button', { name: '参考価格を再確認' })).toBeDisabled()
@@ -289,7 +435,7 @@ test('manual recheck replaces summaries, never committed prices or drafts', asyn
 test('failed recheck labels retained data as previous, and cannot apply it as a successful new lookup', async ({ page }) => {
   await seed(page); await page.goto('/'); await check(page).click()
   await expect(panel(page).getByRole('button', { name: 'この価格を適用' })).toBeEnabled()
-  await page.route(summaryUrl, (route) => route.fulfill({ status: 503, headers: { 'Retry-After': '600' }, json: { ok: false, error: { code: 'PRICING_UNAVAILABLE' } } }))
+  await page.route(summaryUrl, (route) => route.fulfill({ status: 503, headers: { 'Retry-After': '600', 'Access-Control-Expose-Headers': 'Retry-After' }, json: { ok: false, error: { code: 'PRICING_UNAVAILABLE' } } }))
   await panel(page).getByRole('button', { name: '参考価格を再確認' }).click()
   await expect(panel(page).getByRole('alert')).toHaveText('再確認に失敗しました。表示は前回の結果です。')
   await expect(panel(page).locator('.search-price small')).toContainText('前回値・再確認失敗')
@@ -341,7 +487,7 @@ test('over-limit summary does not prevent product selection and cannot be explic
 })
 
 test('503 errors do not block selection or manual editing', async ({ page }) => {
-  await page.route(summaryUrl, (route) => route.fulfill({ status: 503, headers: { 'Retry-After': '600' }, json: { ok: false, error: { code: 'PRICING_UNAVAILABLE' } } }))
+  await page.route(summaryUrl, (route) => route.fulfill({ status: 503, headers: { 'Retry-After': '600', 'Access-Control-Expose-Headers': 'Retry-After' }, json: { ok: false, error: { code: 'PRICING_UNAVAILABLE' } } }))
   await search(page)
   await expect(page.getByText('価格を取得できませんでした', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: `${product.name}を構成に追加`, exact: true }).click()

@@ -18,6 +18,7 @@ import { compileConditions, conditionTags, emptyDraft, useSearchSession } from '
 import { FilterPanel } from './FilterPanel'
 import { FilterTags } from './FilterTags'
 import { SearchPrice } from './SearchPrice'
+import { SearchPriceRecheck } from './SearchPriceRecheck'
 import { searchPriceState, initialSearchPrice } from './search-price'
 
 export type SearchRequest = {
@@ -188,7 +189,12 @@ function SearchResults({ category, target, query, conditions, onSelected }: Pick
           </>
         )}
       </div>
-      <div className="search-footer"><p className="field-hint">参考価格：Yahoo!ショッピング。送料・ポイントは反映しません。詳細は追加後の参考価格パネルで確認できます。{prices.stopped && '自動確認は停止しました。追加後に手動で再確認できます。'}</p><Attribution source={search.data?.meta.source} /></div>
+      <div className="search-footer">
+        <p className="field-hint">参考価格：Yahoo!ショッピング。送料・ポイントは反映しません。詳細は構成行の参考価格パネルで確認できます。</p>
+        <SearchPriceRecheck key={JSON.stringify(search.data?.data.map(({ source, upstream_key }) => [source, upstream_key]))}
+          prices={prices} productCount={search.isSuccess ? search.data.data.length : 0} />
+        <Attribution source={search.data?.meta.source} />
+      </div>
     </>
   )
 }

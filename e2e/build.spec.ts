@@ -480,32 +480,35 @@ test('query changes abort an in-flight cursor page and start keyword pagination 
   await expect(page.getByRole('alert')).toHaveCount(0)
 })
 
-test('broad selection and product areas support pointer and keyboard without intercepting row controls', async ({ page }, testInfo) => {
+test('broad selection and product areas support pointer and keyboard without intercepting row controls', async ({ page, diagnosticScreenshot }) => {
   await page.goto('/')
   const viewport = page.viewportSize()!
   for (const width of [320, 393, 740, 1024, 1280, 1440]) {
-    await page.setViewportSize({ width, height: 960 })
-    for (const category of mainCategories) {
-      const section = page.getByRole('region', { name: category.label, exact: true })
-      const opener = section.getByRole('button', { name: `${category.label}を選択`, exact: true })
-      await expect(opener).toHaveText('—パーツを選択')
-      await expect(section.getByRole('button', { name: `${category.label}を追加`, exact: true })).toHaveCount(0)
-      const box = (await opener.boundingBox())!
-      expect(box.width).toBeGreaterThanOrEqual(100)
-      expect(box.height).toBeGreaterThanOrEqual(44)
-      const heading = (await section.getByRole('heading').boundingBox())!
-      expect(box.y).toBeGreaterThanOrEqual(heading.y + heading.height)
-      const sectionBox = (await section.boundingBox())!
-      expect(Math.abs(box.x - sectionBox.x)).toBeLessThan(1)
-      expect(Math.abs(box.width - sectionBox.width)).toBeLessThan(1)
-      expect(Math.abs(box.y + box.height - (sectionBox.y + sectionBox.height))).toBeLessThan(1)
-      const height = sectionBox.height
-      expect(height).toBeGreaterThanOrEqual(68)
-      expect(height).toBeLessThanOrEqual(72)
-      expect(await section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
-    }
-    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
-    await page.screenshot({ path: testInfo.outputPath(`empty-sheet-${width}.png`), fullPage: true })
+    await test.step(`layout and horizontal overflow at ${width}×960`, async () => {
+      await page.setViewportSize({ width, height: 960 })
+      for (const category of mainCategories) {
+        const section = page.getByRole('region', { name: category.label, exact: true })
+        const opener = section.getByRole('button', { name: `${category.label}を選択`, exact: true })
+        await expect(opener).toHaveText('—パーツを選択')
+        await expect(section.getByRole('button', { name: `${category.label}を追加`, exact: true })).toHaveCount(0)
+        const box = (await opener.boundingBox())!
+        expect(box.width).toBeGreaterThanOrEqual(100)
+        expect(box.height).toBeGreaterThanOrEqual(44)
+        const heading = (await section.getByRole('heading').boundingBox())!
+        expect(box.y).toBeGreaterThanOrEqual(heading.y + heading.height)
+        const sectionBox = (await section.boundingBox())!
+        expect(Math.abs(box.x - sectionBox.x)).toBeLessThan(1)
+        expect(Math.abs(box.width - sectionBox.width)).toBeLessThan(1)
+        expect(Math.abs(box.y + box.height - (sectionBox.y + sectionBox.height))).toBeLessThan(1)
+        const height = sectionBox.height
+        expect(height).toBeGreaterThanOrEqual(68)
+        expect(height).toBeLessThanOrEqual(72)
+        expect(await section.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+      }
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+    })
+    // Diagnostic capture is a separate step; functional assertions are never retried.
+    await diagnosticScreenshot(`empty-sheet-${width}`)
   }
   await page.setViewportSize(viewport)
   const section = page.getByRole('region', { name: 'CPU', exact: true })
@@ -513,7 +516,7 @@ test('broad selection and product areas support pointer and keyboard without int
   const box = (await opener.boundingBox())!
   await opener.hover()
   await expect(opener).toHaveCSS('box-shadow', 'none')
-  await page.screenshot({ path: testInfo.outputPath('selection-row-hover.png'), fullPage: true })
+  await diagnosticScreenshot('selection-row-hover')
   // The empty space away from the label must also open the existing search dialog.
   await opener.click({ position: { x: box.width - 3, y: box.height - 3 } })
   await expect(page.getByRole('dialog', { name: 'CPUを選択', exact: true })).toBeVisible()
